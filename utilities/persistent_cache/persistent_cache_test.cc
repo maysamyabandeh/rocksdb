@@ -29,6 +29,12 @@ static void OnOpenForRead(void* arg) {
       std::bind(OnOpenForRead, std::placeholders::_1));
 }
 
+static void OnDeleteDir(void* arg) {
+  char* dir = static_cast<char*>(arg);
+  std::string cmd("rm -r -f " + std::string(dir));
+  system(cmd.c_str());
+}
+
 static void OnOpenForWrite(void* arg) {
   int* val = static_cast<int*>(arg);
   *val &= ~O_DIRECT;
@@ -169,6 +175,21 @@ TEST_F(PersistentCacheTierTest, BlockCacheInsert) {
     }
   }
 }
+
+#ifdef OS_LINUX
+// Block cache tests
+TEST_F(PersistentCacheTierTest, BlockCacheInsertWithFileCreateError) {
+  cache_ = NewBlockCache(Env::Default(), path_,
+                         /*size=*/std::numeric_limits<uint64_t>::max(),
+                         /*direct_writes=*/ false);
+  rocksdb::SyncPoint::GetInstance()->SetCallBack( 
+    "BlockCacheTier::NewCacheFile:DeleteDir", OnDeleteDir);
+
+  RunNegativeInsertTest(/*nthreads=*/ 1, /*max_keys*/ 10 * 1024 * kStressFactor);
+
+  rocksdb::SyncPoint::GetInstance()->ClearAllCallBacks();
+}
+#endif
 
 TEST_F(PersistentCacheTierTest, BlockCacheInsertWithEviction) {
   for (auto nthreads : {1, 5}) {
