@@ -189,9 +189,10 @@ Status TransactionImpl::Prepare() {
     WriteOptions write_options = write_options_;
     write_options.disableWAL = false;
     WriteBatchInternal::MarkEndPrepare(GetWriteBatch()->GetWriteBatch(), name_);
+    // Step 3: Disable write to memtable at commit
     s = db_impl_->WriteImpl(write_options, GetWriteBatch()->GetWriteBatch(),
                             /*callback*/ nullptr, &log_number_, /*log ref*/ 0,
-                            /* disable_memtable*/ true);
+                            /* disable_memtable*/ false);
     if (s.ok()) {
       assert(log_number_ != 0);
       dbimpl_->MarkLogAsContainingPrepSection(log_number_);
