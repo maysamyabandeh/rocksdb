@@ -247,7 +247,9 @@ Status TransactionImpl::Commit() {
           "Commit-time batch contains values that will not be committed.");
     } else {
       txn_state_.store(AWAITING_COMMIT);
-      s = db_->Write(write_options_, GetWriteBatch()->GetWriteBatch());
+      // Step 4.1: Write to memtable with Prepare
+      s = db_impl_->WriteImpl(write_options_, GetWriteBatch()->GetWriteBatch(),
+                              nullptr, nullptr, 0, true);
       Clear();
       if (s.ok()) {
         txn_state_.store(COMMITED);
