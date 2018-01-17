@@ -81,7 +81,7 @@ class InlineSkipList {
   //
   // REQUIRES: nothing that compares equal to key is currently in the list.
   // REQUIRES: no concurrent calls to any of inserts.
-  void Insert(const char* key);
+  bool Insert(const char* key);
 
   // Inserts a key allocated by AllocateKey with a hint of last insert
   // position in the skip-list. If hint points to nullptr, a new hint will be
@@ -114,7 +114,7 @@ class InlineSkipList {
   // false has worse running time for the non-sequential case O(log N),
   // but a better constant factor.
   template <bool UseCAS>
-  void Insert(const char* key, Splice* splice, bool allow_partial_splice_fix);
+  bool Insert(const char* key, Splice* splice, bool allow_partial_splice_fix);
 
   // Returns true iff an entry that compares equal to key is in the list.
   bool Contains(const char* key) const;
@@ -626,8 +626,8 @@ InlineSkipList<Comparator>::AllocateSplice() {
 }
 
 template <class Comparator>
-void InlineSkipList<Comparator>::Insert(const char* key) {
-  Insert<false>(key, seq_splice_, false);
+bool InlineSkipList<Comparator>::Insert(const char* key) {
+  return Insert<false>(key, seq_splice_, false);
 }
 
 template <class Comparator>
@@ -694,7 +694,7 @@ void InlineSkipList<Comparator>::RecomputeSpliceLevels(const char* key,
 
 template <class Comparator>
 template <bool UseCAS>
-void InlineSkipList<Comparator>::Insert(const char* key, Splice* splice,
+bool InlineSkipList<Comparator>::Insert(const char* key, Splice* splice,
                                         bool allow_partial_splice_fix) {
   Node* x = reinterpret_cast<Node*>(const_cast<char*>(key)) - 1;
   int height = x->UnstashHeight();
@@ -833,6 +833,10 @@ void InlineSkipList<Comparator>::Insert(const char* key, Splice* splice,
         FindSpliceForLevel<false>(key, splice->prev_[i], nullptr, i, &splice->prev_[i],
                            &splice->next_[i]);
       }
+     if ((splice->next_[i] != nullptr &&
+                  compare_(x->Key(), splice->next_[i]->Key()) >= 0)) {
+       return false;
+     }
       assert(splice->next_[i] == nullptr ||
              compare_(x->Key(), splice->next_[i]->Key()) < 0);
       assert(splice->prev_[i] == head_ ||
@@ -865,6 +869,7 @@ void InlineSkipList<Comparator>::Insert(const char* key, Splice* splice,
   } else {
     splice->height_ = 0;
   }
+  return true;
 }
 
 template <class Comparator>

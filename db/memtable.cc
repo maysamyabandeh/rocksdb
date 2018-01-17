@@ -436,7 +436,7 @@ MemTable::MemTableStats MemTable::ApproximateStats(const Slice& start_ikey,
   return {entry_count * (data_size / n), entry_count};
 }
 
-void MemTable::Add(SequenceNumber s, ValueType type,
+bool MemTable::Add(SequenceNumber s, ValueType type,
                    const Slice& key, /* user key */
                    const Slice& value, bool allow_concurrent,
                    MemTablePostProcessInfo* post_process_info) {
@@ -473,7 +473,10 @@ void MemTable::Add(SequenceNumber s, ValueType type,
       Slice prefix = insert_with_hint_prefix_extractor_->Transform(key_slice);
       table->InsertWithHint(handle, &insert_hints_[prefix]);
     } else {
-      table->Insert(handle);
+      bool res = table->Insert(handle);
+      if (!res) {
+        return res;
+      }
     }
 
     // this is a bit ugly, but is the way to avoid locked instructions
@@ -536,6 +539,7 @@ void MemTable::Add(SequenceNumber s, ValueType type,
     is_range_del_table_empty_ = false;
   }
   UpdateOldestKeyTime();
+  return true;
 }
 
 // Callback from MemTable::Get()
@@ -763,7 +767,7 @@ bool MemTable::Get(const LookupKey& key, std::string* value, Status* s,
   return found_final_value;
 }
 
-void MemTable::Update(SequenceNumber seq,
+Status MemTable::Update(SequenceNumber seq,
                       const Slice& key,
                       const Slice& value) {
   LookupKey lkey(key, seq);
@@ -793,6 +797,7 @@ void MemTable::Update(SequenceNumber seq,
       ValueType type;
       SequenceNumber unused;
       UnPackSequenceAndType(tag, &unused, &type);
+      assert(unused != seq);
       if (type == kTypeValue) {
         Slice prev_value = GetLengthPrefixedSlice(key_ptr + key_length);
         uint32_t prev_size = static_cast<uint32_t>(prev_value.size());
@@ -808,7 +813,7 @@ void MemTable::Update(SequenceNumber seq,
                  (unsigned)(VarintLength(key_length) + key_length +
                             VarintLength(value.size()) + value.size()));
           RecordTick(moptions_.statistics, NUMBER_KEYS_UPDATED);
-          return;
+          return Status::OK();
         }
       }
     }
@@ -816,6 +821,7 @@ void MemTable::Update(SequenceNumber seq,
 
   // key doesn't exist
   Add(seq, kTypeValue, key, value);
+          return Status::OK();
 }
 
 bool MemTable::UpdateCallback(SequenceNumber seq,

@@ -1082,6 +1082,7 @@ class MemTableInserter : public WriteBatch::Handler {
       MaybeAdvanceSeq();
       return seek_status;
     }
+    Status ret_status;
 
     MemTable* mem = cf_mems_->GetMemTable();
     auto* moptions = mem->GetImmutableMemTableOptions();
@@ -1090,7 +1091,7 @@ class MemTableInserter : public WriteBatch::Handler {
                get_post_process_info(mem));
     } else if (moptions->inplace_callback == nullptr) {
       assert(!concurrent_memtable_writes_);
-      mem->Update(sequence_, key, value);
+      ret_status = mem->Update(sequence_, key, value);
     } else {
       assert(!concurrent_memtable_writes_);
       if (mem->UpdateCallback(sequence_, key, value)) {
@@ -1137,7 +1138,7 @@ class MemTableInserter : public WriteBatch::Handler {
     // in memtable add/update.
     MaybeAdvanceSeq();
     CheckMemtableFull();
-    return Status::OK();
+    return ret_status;
   }
 
   virtual Status PutCF(uint32_t column_family_id, const Slice& key,
