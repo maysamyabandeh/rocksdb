@@ -76,10 +76,11 @@ Status WritePreparedTxn::PrepareInternal() {
     ROCKS_LOG_WARN(db_impl_->immutable_db_options().info_log,
                    "Collapse overhead due to duplicate keys");
   }
+  size_t batch_cnt = 1;
   Status s =
       db_impl_->WriteImpl(write_options, GetWriteBatch()->GetWriteBatch(),
                           /*callback*/ nullptr, &log_number_, /*log ref*/ 0,
-                          !DISABLE_MEMTABLE, &seq_used);
+                          !DISABLE_MEMTABLE, &seq_used, batch_cnt);
   assert(!s.ok() || seq_used != kMaxSequenceNumber);
   auto prepare_seq = seq_used;
   SetId(prepare_seq);
@@ -104,6 +105,11 @@ Status WritePreparedTxn::CommitWithoutPrepareInternal() {
 Status WritePreparedTxn::CommitBatchInternal(WriteBatch* batch) {
   ROCKS_LOG_DETAILS(db_impl_->immutable_db_options().info_log,
                     "CommitBatchInternal");
+  if (batch->Count() == 0) {
+    // Otherwise our 1 seq per batch logic will break since there is no seq
+    // increased for this batch.
+    return Status::OK();
+  }
   // TODO(myabandeh): handle the duplicate keys in the batch
   bool do_one_write = !db_impl_->immutable_db_options().two_write_queues;
   bool sync = write_options_.sync;
@@ -119,9 +125,10 @@ Status WritePreparedTxn::CommitBatchInternal(WriteBatch* batch) {
   const bool INCLUDES_DATA = true;
   WritePreparedCommitEntryPreReleaseCallback update_commit_map(
       wpt_db_, db_impl_, kMaxSequenceNumber, INCLUDES_DATA);
-  auto s = db_impl_->WriteImpl(write_options_, batch, nullptr, nullptr,
-                               no_log_ref, !DISABLE_MEMTABLE, &seq_used,
-                               do_one_write ? &update_commit_map : nullptr);
+  size_t batch_cnt = 1;
+  auto s = db_impl_->WriteImpl(
+      write_options_, batch, nullptr, nullptr, no_log_ref, !DISABLE_MEMTABLE,
+      &seq_used, batch_cnt, do_one_write ? &update_commit_map : nullptr);
   assert(!s.ok() || seq_used != kMaxSequenceNumber);
   uint64_t& prepare_seq = seq_used;
   SetId(prepare_seq);
@@ -150,7 +157,7 @@ Status WritePreparedTxn::CommitBatchInternal(WriteBatch* batch) {
   // In the absence of Prepare markers, use Noop as a batch separator
   WriteBatchInternal::InsertNoop(&empty_batch);
   s = db_impl_->WriteImpl(write_options_, &empty_batch, nullptr, nullptr,
-                          no_log_ref, DISABLE_MEMTABLE, &seq_used,
+                          no_log_ref, DISABLE_MEMTABLE, &seq_used, batch_cnt,
                           &update_commit_map_with_prepare);
   assert(!s.ok() || seq_used != kMaxSequenceNumber);
   return s;
@@ -183,9 +190,10 @@ Status WritePreparedTxn::CommitInternal() {
   // a connection between the memtable and its WAL, so there is no need to
   // redundantly reference the log that contains the prepared data.
   const uint64_t zero_log_number = 0ull;
+  size_t batch_cnt = 1;
   auto s = db_impl_->WriteImpl(write_options_, working_batch, nullptr, nullptr,
                                zero_log_number, disable_memtable, &seq_used,
-                               &update_commit_map);
+                               batch_cnt, &update_commit_map);
   assert(!s.ok() || seq_used != kMaxSequenceNumber);
   return s;
 }
@@ -269,8 +277,9 @@ Status WritePreparedTxn::RollbackInternal() {
   const bool INCLUDES_DATA = true;
   WritePreparedCommitEntryPreReleaseCallback update_commit_map(
       wpt_db_, db_impl_, kMaxSequenceNumber, INCLUDES_DATA);
+  size_t batch_cnt = 1;
   s = db_impl_->WriteImpl(write_options_, &rollback_batch, nullptr, nullptr,
-                          no_log_ref, !DISABLE_MEMTABLE, &seq_used,
+                          no_log_ref, !DISABLE_MEMTABLE, &seq_used, batch_cnt,
                           do_one_write ? &update_commit_map : nullptr);
   assert(!s.ok() || seq_used != kMaxSequenceNumber);
   if (!s.ok()) {
@@ -295,7 +304,7 @@ Status WritePreparedTxn::RollbackInternal() {
   // In the absence of Prepare markers, use Noop as a batch separator
   WriteBatchInternal::InsertNoop(&empty_batch);
   s = db_impl_->WriteImpl(write_options_, &empty_batch, nullptr, nullptr,
-                          no_log_ref, DISABLE_MEMTABLE, &seq_used,
+                          no_log_ref, DISABLE_MEMTABLE, &seq_used, batch_cnt,
                           &update_commit_map_with_prepare);
   assert(!s.ok() || seq_used != kMaxSequenceNumber);
   // Mark the txn as rolled back

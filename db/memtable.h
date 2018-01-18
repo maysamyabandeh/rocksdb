@@ -208,9 +208,7 @@ class MemTable {
   //
   // REQUIRES: external synchronization to prevent simultaneous
   // operations on the same MemTable.
-  Status Update(SequenceNumber seq,
-              const Slice& key,
-              const Slice& value);
+  Status Update(SequenceNumber seq, const Slice& key, const Slice& value);
 
   // If prev_value for key exists, attempts to update it inplace.
   // else returns false

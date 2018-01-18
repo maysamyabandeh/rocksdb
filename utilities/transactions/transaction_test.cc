@@ -4980,13 +4980,13 @@ TEST_P(TransactionTest, SeqAdvanceTest) {
 // Test that the transactional db can handle duplicate keys in the write batch
 TEST_P(TransactionTest, DuplicateKeyTest) {
   {
-  WriteOptions write_options;
-  WriteBatch batch;
-  batch.Put(Slice("key"), Slice("value"));
-  batch.Put(Slice("key"), Slice("value"));
+    WriteOptions write_options;
+    WriteBatch batch;
+    batch.Put(Slice("key"), Slice("value"));
+    batch.Put(Slice("key"), Slice("value"));
 
-  ASSERT_OK(db->Write(write_options, &batch));
-  return;
+    ASSERT_OK(db->Write(write_options, &batch));
+    return;
   }
 
   for (bool do_prepare : {true, false}) {

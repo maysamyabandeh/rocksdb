@@ -767,9 +767,8 @@ bool MemTable::Get(const LookupKey& key, std::string* value, Status* s,
   return found_final_value;
 }
 
-Status MemTable::Update(SequenceNumber seq,
-                      const Slice& key,
-                      const Slice& value) {
+Status MemTable::Update(SequenceNumber seq, const Slice& key,
+                        const Slice& value) {
   LookupKey lkey(key, seq);
   Slice mem_key = lkey.memtable_key();
 
@@ -821,7 +820,7 @@ Status MemTable::Update(SequenceNumber seq,
 
   // key doesn't exist
   Add(seq, kTypeValue, key, value);
-          return Status::OK();
+  return Status::OK();
 }
 
 bool MemTable::UpdateCallback(SequenceNumber seq,
