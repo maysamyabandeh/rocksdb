@@ -107,7 +107,7 @@ TEST_F(MemTableListTest, Empty) {
 }
 
 TEST_F(MemTableListTest, DuplicateSeq) {
-  SequenceNumber seq = 1;
+  SequenceNumber seq = 123;
   std::string value;
   Status s;
   MergeContext merge_context;
@@ -125,9 +125,17 @@ TEST_F(MemTableListTest, DuplicateSeq) {
 
   // Write some keys to this memtable.
   bool res;
-  res = mem->Add(seq, kTypeValue, "key2", "value2");
+  res = mem->Add(seq, kTypeValue, "key", "value2");
   ASSERT_TRUE(res);
-  res = mem->Add(seq, kTypeValue, "key2", "value2");
+  res = mem->Add(seq, kTypeValue, "key", "value2");
+  ASSERT_FALSE(res);
+  res = mem->Add(seq, kTypeMerge, "key", "value2");
+  ASSERT_FALSE(res);
+  res = mem->Add(seq + 1, kTypeMerge, "key", "value2");
+  ASSERT_TRUE(res);
+  res = mem->Add(seq, kTypeDeletion, "key", "");
+  ASSERT_FALSE(res);
+  res = mem->Add(seq, kTypeSingleDeletion, "key", "");
   ASSERT_FALSE(res);
 }
 
