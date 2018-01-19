@@ -13,6 +13,7 @@
 
 #include <inttypes.h>
 #include <map>
+#include <set>
 
 #include "db/column_family.h"
 #include "db/db_impl.h"
@@ -102,6 +103,54 @@ Status WritePreparedTxn::CommitWithoutPrepareInternal() {
   return CommitBatchInternal(GetWriteBatch()->GetWriteBatch());
 }
 
+  struct BatchCounter : public WriteBatch::Handler {
+    struct KeyComparator {
+      bool operator() (const std::pair<uint32_t, Slice>& lhs, const std::pair<uint32_t, Slice>& rhs) const {
+        if (lhs.first != rhs.first) {
+          return lhs.first < rhs.first;
+        }
+        return lhs.second.compare(rhs.second) < 0;
+      }
+    };
+    std::set<std::pair<uint32_t, Slice>, KeyComparator> keys_;
+    BatchCounter() {}
+    size_t UniqueKeys() { return keys_.size(); }
+    Status MarkNoop(bool empty_batch) override {
+      return Status::OK();
+    }
+    Status MarkEndPrepare(const Slice&) override {
+      assert(false);
+      return Status::OK();
+    }
+    Status MarkCommit(const Slice&) override {
+      assert(false);
+      return Status::OK();
+    }
+
+    Status PutCF(uint32_t cf, const Slice& key, const Slice& val) override {
+      keys_.insert({cf, key});
+      return Status::OK();
+    }
+    Status DeleteCF(uint32_t cf, const Slice& key) override {
+      keys_.insert({cf, key});
+      return Status::OK();
+    }
+    Status SingleDeleteCF(uint32_t cf, const Slice& key) override {
+      keys_.insert({cf, key});
+      return Status::OK();
+    }
+    Status MergeCF(uint32_t cf, const Slice& key, const Slice& val) override {
+      keys_.insert({cf, key});
+      return Status::OK();
+    }
+    Status MarkBeginPrepare() override { 
+      assert(false);
+      return Status::OK(); }
+    Status MarkRollback(const Slice&) override { 
+      assert(false);
+      return Status::OK(); }
+  };
+
 Status WritePreparedTxn::CommitBatchInternal(WriteBatch* batch) {
   ROCKS_LOG_DETAILS(db_impl_->immutable_db_options().info_log,
                     "CommitBatchInternal");
@@ -110,7 +159,11 @@ Status WritePreparedTxn::CommitBatchInternal(WriteBatch* batch) {
     // increased for this batch.
     return Status::OK();
   }
-  // TODO(myabandeh): handle the duplicate keys in the batch
+  BatchCounter counter;
+  batch->Iterate(&counter);
+  size_t batch_cnt = batch->Count() + 1 - counter.UniqueKeys();
+  assert(batch_cnt);
+
   bool do_one_write = !db_impl_->immutable_db_options().two_write_queues;
   bool sync = write_options_.sync;
   if (!do_one_write) {
@@ -125,7 +178,6 @@ Status WritePreparedTxn::CommitBatchInternal(WriteBatch* batch) {
   const bool INCLUDES_DATA = true;
   WritePreparedCommitEntryPreReleaseCallback update_commit_map(
       wpt_db_, db_impl_, kMaxSequenceNumber, INCLUDES_DATA);
-  size_t batch_cnt = 1;
   auto s = db_impl_->WriteImpl(
       write_options_, batch, nullptr, nullptr, no_log_ref, !DISABLE_MEMTABLE,
       &seq_used, batch_cnt, do_one_write ? &update_commit_map : nullptr);
@@ -154,10 +206,11 @@ Status WritePreparedTxn::CommitBatchInternal(WriteBatch* batch) {
       wpt_db_, db_impl_, prepare_seq);
   WriteBatch empty_batch;
   empty_batch.PutLogData(Slice());
+  const size_t ONE_BATCH = 1;
   // In the absence of Prepare markers, use Noop as a batch separator
   WriteBatchInternal::InsertNoop(&empty_batch);
   s = db_impl_->WriteImpl(write_options_, &empty_batch, nullptr, nullptr,
-                          no_log_ref, DISABLE_MEMTABLE, &seq_used, batch_cnt,
+                          no_log_ref, DISABLE_MEMTABLE, &seq_used, ONE_BATCH,
                           &update_commit_map_with_prepare);
   assert(!s.ok() || seq_used != kMaxSequenceNumber);
   return s;
@@ -206,6 +259,7 @@ Status WritePreparedTxn::RollbackInternal() {
   assert(GetId() > 0);
   // In WritePrepared, the txn is is the same as prepare seq
   auto last_visible_txn = GetId() - 1;
+  // TODO(myabandeh): handle duplicate keys
   struct RollbackWriteBatchBuilder : public WriteBatch::Handler {
     DBImpl* db_;
     ReadOptions roptions;
