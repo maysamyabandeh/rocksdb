@@ -4984,8 +4984,18 @@ TEST_P(TransactionTest, DuplicateKeyTest) {
     WriteBatch batch;
     batch.Put(Slice("key"), Slice("value"));
     batch.Put(Slice("key"), Slice("value"));
+    batch.Put(Slice("key2"), Slice("value2"));
 
     ASSERT_OK(db->Write(write_options, &batch));
+
+    ReadOptions ropt;
+    PinnableSlice pinnable_val;
+    auto s = db->Get(ropt, db->DefaultColumnFamily(), "key", &pinnable_val);
+    ASSERT_OK(s);
+    ASSERT_TRUE(pinnable_val == ("value"));
+    s = db->Get(ropt, db->DefaultColumnFamily(), "key2", &pinnable_val);
+    ASSERT_OK(s);
+    ASSERT_TRUE(pinnable_val == ("value2"));
     return;
   }
 

@@ -103,53 +103,54 @@ Status WritePreparedTxn::CommitWithoutPrepareInternal() {
   return CommitBatchInternal(GetWriteBatch()->GetWriteBatch());
 }
 
-  struct BatchCounter : public WriteBatch::Handler {
-    struct KeyComparator {
-      bool operator() (const std::pair<uint32_t, Slice>& lhs, const std::pair<uint32_t, Slice>& rhs) const {
-        if (lhs.first != rhs.first) {
-          return lhs.first < rhs.first;
-        }
-        return lhs.second.compare(rhs.second) < 0;
+struct BatchCounter : public WriteBatch::Handler {
+  struct KeyComparator {
+    bool operator()(const std::pair<uint32_t, Slice>& lhs,
+                    const std::pair<uint32_t, Slice>& rhs) const {
+      if (lhs.first != rhs.first) {
+        return lhs.first < rhs.first;
       }
-    };
-    std::set<std::pair<uint32_t, Slice>, KeyComparator> keys_;
-    BatchCounter() {}
-    size_t UniqueKeys() { return keys_.size(); }
-    Status MarkNoop(bool empty_batch) override {
-      return Status::OK();
+      return lhs.second.compare(rhs.second) < 0;
     }
-    Status MarkEndPrepare(const Slice&) override {
-      assert(false);
-      return Status::OK();
-    }
-    Status MarkCommit(const Slice&) override {
-      assert(false);
-      return Status::OK();
-    }
-
-    Status PutCF(uint32_t cf, const Slice& key, const Slice& val) override {
-      keys_.insert({cf, key});
-      return Status::OK();
-    }
-    Status DeleteCF(uint32_t cf, const Slice& key) override {
-      keys_.insert({cf, key});
-      return Status::OK();
-    }
-    Status SingleDeleteCF(uint32_t cf, const Slice& key) override {
-      keys_.insert({cf, key});
-      return Status::OK();
-    }
-    Status MergeCF(uint32_t cf, const Slice& key, const Slice& val) override {
-      keys_.insert({cf, key});
-      return Status::OK();
-    }
-    Status MarkBeginPrepare() override { 
-      assert(false);
-      return Status::OK(); }
-    Status MarkRollback(const Slice&) override { 
-      assert(false);
-      return Status::OK(); }
   };
+  std::set<std::pair<uint32_t, Slice>, KeyComparator> keys_;
+  BatchCounter() {}
+  size_t UniqueKeys() { return keys_.size(); }
+  Status MarkNoop(bool empty_batch) override { return Status::OK(); }
+  Status MarkEndPrepare(const Slice&) override {
+    assert(false);
+    return Status::OK();
+  }
+  Status MarkCommit(const Slice&) override {
+    assert(false);
+    return Status::OK();
+  }
+
+  Status PutCF(uint32_t cf, const Slice& key, const Slice& val) override {
+    keys_.insert({cf, key});
+    return Status::OK();
+  }
+  Status DeleteCF(uint32_t cf, const Slice& key) override {
+    keys_.insert({cf, key});
+    return Status::OK();
+  }
+  Status SingleDeleteCF(uint32_t cf, const Slice& key) override {
+    keys_.insert({cf, key});
+    return Status::OK();
+  }
+  Status MergeCF(uint32_t cf, const Slice& key, const Slice& val) override {
+    keys_.insert({cf, key});
+    return Status::OK();
+  }
+  Status MarkBeginPrepare() override {
+    assert(false);
+    return Status::OK();
+  }
+  Status MarkRollback(const Slice&) override {
+    assert(false);
+    return Status::OK();
+  }
+};
 
 Status WritePreparedTxn::CommitBatchInternal(WriteBatch* batch) {
   ROCKS_LOG_DETAILS(db_impl_->immutable_db_options().info_log,
@@ -175,9 +176,9 @@ Status WritePreparedTxn::CommitBatchInternal(WriteBatch* batch) {
   const bool DISABLE_MEMTABLE = true;
   const uint64_t no_log_ref = 0;
   uint64_t seq_used = kMaxSequenceNumber;
-  const bool INCLUDES_DATA = true;
+  const size_t ZERO_PREPARES = 0;
   WritePreparedCommitEntryPreReleaseCallback update_commit_map(
-      wpt_db_, db_impl_, kMaxSequenceNumber, INCLUDES_DATA);
+      wpt_db_, db_impl_, kMaxSequenceNumber, ZERO_PREPARES, batch_cnt);
   auto s = db_impl_->WriteImpl(
       write_options_, batch, nullptr, nullptr, no_log_ref, !DISABLE_MEMTABLE,
       &seq_used, batch_cnt, do_one_write ? &update_commit_map : nullptr);
@@ -203,7 +204,7 @@ Status WritePreparedTxn::CommitBatchInternal(WriteBatch* batch) {
   // Commit the batch by writing an empty batch to the 2nd queue that will
   // release the commit sequence number to readers.
   WritePreparedCommitEntryPreReleaseCallback update_commit_map_with_prepare(
-      wpt_db_, db_impl_, prepare_seq);
+      wpt_db_, db_impl_, prepare_seq, batch_cnt);
   WriteBatch empty_batch;
   empty_batch.PutLogData(Slice());
   const size_t ONE_BATCH = 1;
@@ -235,15 +236,18 @@ Status WritePreparedTxn::CommitInternal() {
 
   auto prepare_seq = GetId();
   const bool includes_data = !empty && !for_recovery;
+  // TODO(myabandeh): assign these numbers
+  size_t prep_batch_cnt = 1;
+  size_t commit_batch_cnt = includes_data ? 1 : 0;
   WritePreparedCommitEntryPreReleaseCallback update_commit_map(
-      wpt_db_, db_impl_, prepare_seq, includes_data);
+      wpt_db_, db_impl_, prepare_seq, prep_batch_cnt, commit_batch_cnt);
   const bool disable_memtable = !includes_data;
   uint64_t seq_used = kMaxSequenceNumber;
   // Since the prepared batch is directly written to memtable, there is already
   // a connection between the memtable and its WAL, so there is no need to
   // redundantly reference the log that contains the prepared data.
   const uint64_t zero_log_number = 0ull;
-  size_t batch_cnt = 1;
+  size_t batch_cnt = commit_batch_cnt ? commit_batch_cnt : 1;
   auto s = db_impl_->WriteImpl(write_options_, working_batch, nullptr, nullptr,
                                zero_log_number, disable_memtable, &seq_used,
                                batch_cnt, &update_commit_map);
@@ -328,9 +332,10 @@ Status WritePreparedTxn::RollbackInternal() {
   const bool DISABLE_MEMTABLE = true;
   const uint64_t no_log_ref = 0;
   uint64_t seq_used = kMaxSequenceNumber;
-  const bool INCLUDES_DATA = true;
+  const size_t ZERO_PREPARES = 0;
+  const size_t ONE_BATCH = 1;
   WritePreparedCommitEntryPreReleaseCallback update_commit_map(
-      wpt_db_, db_impl_, kMaxSequenceNumber, INCLUDES_DATA);
+      wpt_db_, db_impl_, kMaxSequenceNumber, ZERO_PREPARES, ONE_BATCH);
   size_t batch_cnt = 1;
   s = db_impl_->WriteImpl(write_options_, &rollback_batch, nullptr, nullptr,
                           no_log_ref, !DISABLE_MEMTABLE, &seq_used, batch_cnt,
@@ -352,7 +357,7 @@ Status WritePreparedTxn::RollbackInternal() {
   // Commit the batch by writing an empty batch to the queue that will release
   // the commit sequence number to readers.
   WritePreparedCommitEntryPreReleaseCallback update_commit_map_with_prepare(
-      wpt_db_, db_impl_, prepare_seq);
+      wpt_db_, db_impl_, prepare_seq, ONE_BATCH);
   WriteBatch empty_batch;
   empty_batch.PutLogData(Slice());
   // In the absence of Prepare markers, use Noop as a batch separator
