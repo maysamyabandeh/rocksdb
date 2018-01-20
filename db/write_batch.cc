@@ -1189,7 +1189,7 @@ class MemTableInserter : public WriteBatch::Handler {
     }
     MaybeAdvanceSeq();
     CheckMemtableFull();
-    return Status::OK();
+    return ret_status;
   }
 
   virtual Status DeleteCF(uint32_t column_family_id,

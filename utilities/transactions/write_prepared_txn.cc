@@ -31,9 +31,7 @@ WritePreparedTxn::WritePreparedTxn(WritePreparedTxnDB* txn_db,
                                    const WriteOptions& write_options,
                                    const TransactionOptions& txn_options)
     : PessimisticTransaction(txn_db, write_options, txn_options),
-      wpt_db_(txn_db) {
-  GetWriteBatch()->DisableDuplicateMergeKeys();
-}
+      wpt_db_(txn_db) {}
 
 Status WritePreparedTxn::Get(const ReadOptions& read_options,
                              ColumnFamilyHandle* column_family,
@@ -72,16 +70,12 @@ Status WritePreparedTxn::PrepareInternal() {
                                      !WRITE_AFTER_COMMIT);
   const bool DISABLE_MEMTABLE = true;
   uint64_t seq_used = kMaxSequenceNumber;
-  bool collapsed = GetWriteBatch()->Collapse();
-  if (collapsed) {
-    ROCKS_LOG_WARN(db_impl_->immutable_db_options().info_log,
-                   "Collapse overhead due to duplicate keys");
-  }
-  size_t batch_cnt = 1;
+  // For each duplicate key we account for a new sub-batch
+  prepare_batch_cnt_ = 1 + GetWriteBatch()->DuplicateKeysCnt();
   Status s =
       db_impl_->WriteImpl(write_options, GetWriteBatch()->GetWriteBatch(),
                           /*callback*/ nullptr, &log_number_, /*log ref*/ 0,
-                          !DISABLE_MEMTABLE, &seq_used, batch_cnt);
+                          !DISABLE_MEMTABLE, &seq_used, prepare_batch_cnt_);
   assert(!s.ok() || seq_used != kMaxSequenceNumber);
   auto prepare_seq = seq_used;
   SetId(prepare_seq);
@@ -95,12 +89,9 @@ Status WritePreparedTxn::PrepareInternal() {
 }
 
 Status WritePreparedTxn::CommitWithoutPrepareInternal() {
-  bool collapsed = GetWriteBatch()->Collapse();
-  if (collapsed) {
-    ROCKS_LOG_WARN(db_impl_->immutable_db_options().info_log,
-                   "Collapse overhead due to duplicate keys");
-  }
-  return CommitBatchInternal(GetWriteBatch()->GetWriteBatch());
+  // For each duplicate key we account for a new sub-batch
+  const size_t batch_cnt = 1 + GetWriteBatch()->DuplicateKeysCnt();
+  return CommitBatchInternal(GetWriteBatch()->GetWriteBatch(), batch_cnt);
 }
 
 struct BatchCounter : public WriteBatch::Handler {
@@ -152,7 +143,8 @@ struct BatchCounter : public WriteBatch::Handler {
   }
 };
 
-Status WritePreparedTxn::CommitBatchInternal(WriteBatch* batch) {
+Status WritePreparedTxn::CommitBatchInternal(WriteBatch* batch,
+                                             size_t batch_cnt) {
   ROCKS_LOG_DETAILS(db_impl_->immutable_db_options().info_log,
                     "CommitBatchInternal");
   if (batch->Count() == 0) {
@@ -160,9 +152,11 @@ Status WritePreparedTxn::CommitBatchInternal(WriteBatch* batch) {
     // increased for this batch.
     return Status::OK();
   }
-  BatchCounter counter;
-  batch->Iterate(&counter);
-  size_t batch_cnt = batch->Count() + 1 - counter.UniqueKeys();
+  if (batch_cnt == 0) {  // not provided, then compute it
+    BatchCounter counter;
+    batch->Iterate(&counter);
+    batch_cnt = batch->Count() + 1 - counter.UniqueKeys();
+  }
   assert(batch_cnt);
 
   bool do_one_write = !db_impl_->immutable_db_options().two_write_queues;
@@ -236,11 +230,11 @@ Status WritePreparedTxn::CommitInternal() {
 
   auto prepare_seq = GetId();
   const bool includes_data = !empty && !for_recovery;
+  assert(prepare_batch_cnt_);
   // TODO(myabandeh): assign these numbers
-  size_t prep_batch_cnt = 1;
   size_t commit_batch_cnt = includes_data ? 1 : 0;
   WritePreparedCommitEntryPreReleaseCallback update_commit_map(
-      wpt_db_, db_impl_, prepare_seq, prep_batch_cnt, commit_batch_cnt);
+      wpt_db_, db_impl_, prepare_seq, prepare_batch_cnt_, commit_batch_cnt);
   const bool disable_memtable = !includes_data;
   uint64_t seq_used = kMaxSequenceNumber;
   // Since the prepared batch is directly written to memtable, there is already

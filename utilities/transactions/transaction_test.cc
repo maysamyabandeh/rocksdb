@@ -4978,7 +4978,7 @@ TEST_P(TransactionTest, SeqAdvanceTest) {
 }
 
 // Test that the transactional db can handle duplicate keys in the write batch
-TEST_P(TransactionTest, DuplicateKeyTest) {
+TEST_P(TransactionTest, DuplicateKeys) {
   {
     WriteOptions write_options;
     WriteBatch batch;
@@ -4996,7 +4996,6 @@ TEST_P(TransactionTest, DuplicateKeyTest) {
     s = db->Get(ropt, db->DefaultColumnFamily(), "key2", &pinnable_val);
     ASSERT_OK(s);
     ASSERT_TRUE(pinnable_val == ("value2"));
-    return;
   }
 
   for (bool do_prepare : {true, false}) {
@@ -5029,6 +5028,7 @@ TEST_P(TransactionTest, DuplicateKeyTest) {
     ASSERT_OK(s);
     s = txn0->SingleDelete(Slice("foo4"));
     ASSERT_OK(s);
+    ASSERT_EQ(4, txn0->GetWriteBatch()->DuplicateKeysCnt());
     if (do_prepare) {
       s = txn0->Prepare();
       ASSERT_OK(s);

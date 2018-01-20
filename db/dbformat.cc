@@ -125,7 +125,8 @@ int InternalKeyComparator::Compare(const Slice& akey, const Slice& bkey) const {
   return r;
 }
 
-int InternalKeyComparator::CompareKeySeq(const Slice& akey, const Slice& bkey) const {
+int InternalKeyComparator::CompareKeySeq(const Slice& akey,
+                                         const Slice& bkey) const {
   // Order by:
   //    increasing user key (according to user-supplied comparator)
   //    decreasing sequence number

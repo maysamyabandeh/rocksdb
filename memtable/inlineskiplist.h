@@ -838,7 +838,7 @@ bool InlineSkipList<Comparator>::Insert(const char* key, Splice* splice,
         return false;
       }
       if ((splice->prev_[i] != head_ &&
-             compare_(splice->prev_[i]->Key(), x->Key()) >= 0)) {
+           compare_(splice->prev_[i]->Key(), x->Key()) >= 0)) {
         return false;
       }
       assert(splice->next_[i] == nullptr ||
