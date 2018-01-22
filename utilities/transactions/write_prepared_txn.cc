@@ -62,6 +62,54 @@ Iterator* WritePreparedTxn::GetIterator(const ReadOptions& options,
   return write_batch_.NewIteratorWithBase(column_family, db_iter);
 }
 
+struct BatchCounter : public WriteBatch::Handler {
+  struct KeyComparator {
+    bool operator()(const std::pair<uint32_t, Slice>& lhs,
+                    const std::pair<uint32_t, Slice>& rhs) const {
+      if (lhs.first != rhs.first) {
+        return lhs.first < rhs.first;
+      }
+      return lhs.second.compare(rhs.second) < 0;
+    }
+  };
+  std::set<std::pair<uint32_t, Slice>, KeyComparator> keys_;
+  size_t batches_;
+  BatchCounter() : batches_(1) {}
+  size_t BatchCnt() { return batches_; }
+  void AddKey(uint32_t cf, const Slice& key) {
+    auto size = keys_.size();
+    keys_.insert({cf, key});
+    if (size == keys_.size()) {
+      batches_++;
+      keys_.clear();
+      keys_.insert({cf, key});
+    }
+  }
+  Status MarkNoop(bool empty_batch) override { return Status::OK(); }
+  Status MarkEndPrepare(const Slice&) override { return Status::OK(); }
+  Status MarkCommit(const Slice&) override { return Status::OK(); }
+
+  Status PutCF(uint32_t cf, const Slice& key, const Slice& val) override {
+    AddKey(cf, key);
+    return Status::OK();
+  }
+  Status DeleteCF(uint32_t cf, const Slice& key) override {
+    AddKey(cf, key);
+    return Status::OK();
+  }
+  Status SingleDeleteCF(uint32_t cf, const Slice& key) override {
+    AddKey(cf, key);
+    return Status::OK();
+  }
+  Status MergeCF(uint32_t cf, const Slice& key, const Slice& val) override {
+    AddKey(cf, key);
+    return Status::OK();
+  }
+  Status MarkBeginPrepare() override { return Status::OK(); }
+  Status MarkRollback(const Slice&) override { return Status::OK(); }
+  bool WriteAfterCommit() const override { return false; }
+};
+
 Status WritePreparedTxn::PrepareInternal() {
   WriteOptions write_options = write_options_;
   write_options.disableWAL = false;
@@ -71,7 +119,13 @@ Status WritePreparedTxn::PrepareInternal() {
   const bool DISABLE_MEMTABLE = true;
   uint64_t seq_used = kMaxSequenceNumber;
   // For each duplicate key we account for a new sub-batch
-  prepare_batch_cnt_ = 1 + GetWriteBatch()->DuplicateKeysCnt();
+  prepare_batch_cnt_ = 1;
+  if (GetWriteBatch()->HasDuplicateKeys()) {
+    BatchCounter counter;
+    auto s = GetWriteBatch()->GetWriteBatch()->Iterate(&counter);
+    assert(s.ok());
+    prepare_batch_cnt_ = counter.BatchCnt();
+  }
   Status s =
       db_impl_->WriteImpl(write_options, GetWriteBatch()->GetWriteBatch(),
                           /*callback*/ nullptr, &log_number_, /*log ref*/ 0,
@@ -90,58 +144,12 @@ Status WritePreparedTxn::PrepareInternal() {
 
 Status WritePreparedTxn::CommitWithoutPrepareInternal() {
   // For each duplicate key we account for a new sub-batch
-  const size_t batch_cnt = 1 + GetWriteBatch()->DuplicateKeysCnt();
+  size_t batch_cnt = 1;
+  if (GetWriteBatch()->HasDuplicateKeys()) {
+    batch_cnt = 0;  // this will trigger a batch cnt compute
+  }
   return CommitBatchInternal(GetWriteBatch()->GetWriteBatch(), batch_cnt);
 }
-
-struct BatchCounter : public WriteBatch::Handler {
-  struct KeyComparator {
-    bool operator()(const std::pair<uint32_t, Slice>& lhs,
-                    const std::pair<uint32_t, Slice>& rhs) const {
-      if (lhs.first != rhs.first) {
-        return lhs.first < rhs.first;
-      }
-      return lhs.second.compare(rhs.second) < 0;
-    }
-  };
-  std::set<std::pair<uint32_t, Slice>, KeyComparator> keys_;
-  BatchCounter() {}
-  size_t UniqueKeys() { return keys_.size(); }
-  Status MarkNoop(bool empty_batch) override { return Status::OK(); }
-  Status MarkEndPrepare(const Slice&) override {
-    assert(false);
-    return Status::OK();
-  }
-  Status MarkCommit(const Slice&) override {
-    assert(false);
-    return Status::OK();
-  }
-
-  Status PutCF(uint32_t cf, const Slice& key, const Slice& val) override {
-    keys_.insert({cf, key});
-    return Status::OK();
-  }
-  Status DeleteCF(uint32_t cf, const Slice& key) override {
-    keys_.insert({cf, key});
-    return Status::OK();
-  }
-  Status SingleDeleteCF(uint32_t cf, const Slice& key) override {
-    keys_.insert({cf, key});
-    return Status::OK();
-  }
-  Status MergeCF(uint32_t cf, const Slice& key, const Slice& val) override {
-    keys_.insert({cf, key});
-    return Status::OK();
-  }
-  Status MarkBeginPrepare() override {
-    assert(false);
-    return Status::OK();
-  }
-  Status MarkRollback(const Slice&) override {
-    assert(false);
-    return Status::OK();
-  }
-};
 
 Status WritePreparedTxn::CommitBatchInternal(WriteBatch* batch,
                                              size_t batch_cnt) {
@@ -154,8 +162,9 @@ Status WritePreparedTxn::CommitBatchInternal(WriteBatch* batch,
   }
   if (batch_cnt == 0) {  // not provided, then compute it
     BatchCounter counter;
-    batch->Iterate(&counter);
-    batch_cnt = batch->Count() + 1 - counter.UniqueKeys();
+    auto s = batch->Iterate(&counter);
+    assert(s.ok());
+    batch_cnt = counter.BatchCnt();
   }
   assert(batch_cnt);
 

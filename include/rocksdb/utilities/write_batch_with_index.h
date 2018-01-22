@@ -228,9 +228,8 @@ class WriteBatchWithIndex : public WriteBatchBase {
 
  private:
   friend class WritePreparedTxn;
-  friend class TransactionTest_DuplicateKeys_Test;
-  // Number of duplicate keys in the batch.
-  size_t DuplicateKeysCnt();
+  // Returns true if there has been duplicate keys in the batch.
+  bool HasDuplicateKeys();
 
   Status GetFromBatchAndDB(DB* db, const ReadOptions& read_options,
                            ColumnFamilyHandle* column_family, const Slice& key,

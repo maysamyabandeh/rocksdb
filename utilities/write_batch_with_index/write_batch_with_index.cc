@@ -582,8 +582,8 @@ void WriteBatchWithIndex::Rep::AddNewEntry(uint32_t column_family_id) {
 
   WriteBatch* WriteBatchWithIndex::GetWriteBatch() { return &rep->write_batch; }
 
-  size_t WriteBatchWithIndex::DuplicateKeysCnt() {
-    return rep->obsolete_offsets.size();
+  bool WriteBatchWithIndex::HasDuplicateKeys() {
+    return rep->obsolete_offsets.size() > 0;
   }
 
   WBWIIterator* WriteBatchWithIndex::NewIterator() {

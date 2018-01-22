@@ -4983,8 +4983,9 @@ TEST_P(TransactionTest, DuplicateKeys) {
     WriteOptions write_options;
     WriteBatch batch;
     batch.Put(Slice("key"), Slice("value"));
-    batch.Put(Slice("key"), Slice("value"));
     batch.Put(Slice("key2"), Slice("value2"));
+    batch.Put(Slice("key"), Slice("value3"));
+    batch.Put(Slice("key2"), Slice("value4"));
 
     ASSERT_OK(db->Write(write_options, &batch));
 
@@ -4992,10 +4993,10 @@ TEST_P(TransactionTest, DuplicateKeys) {
     PinnableSlice pinnable_val;
     auto s = db->Get(ropt, db->DefaultColumnFamily(), "key", &pinnable_val);
     ASSERT_OK(s);
-    ASSERT_TRUE(pinnable_val == ("value"));
+    ASSERT_TRUE(pinnable_val == ("value3"));
     s = db->Get(ropt, db->DefaultColumnFamily(), "key2", &pinnable_val);
     ASSERT_OK(s);
-    ASSERT_TRUE(pinnable_val == ("value2"));
+    ASSERT_TRUE(pinnable_val == ("value4"));
   }
 
   for (bool do_prepare : {true, false}) {
@@ -5011,6 +5012,11 @@ TEST_P(TransactionTest, DuplicateKeys) {
     s = txn0->Put(Slice("foo1"), Slice("bar1"));
     ASSERT_OK(s);
     s = txn0->Merge(Slice("foo2"), Slice("bar2a"));
+    ASSERT_OK(s);
+    // Repeat a key after the start of a sub-patch. This should not cause a
+    // duplicate in the most recent sub-patch and hence not creating a new
+    // sub-patch.
+    s = txn0->Put(Slice("foo0"), Slice("bar0c"));
     ASSERT_OK(s);
     // TODO(myabandeh): enable this after duplicatae merge keys are supported
     // s = txn0->Merge(Slice("foo2"), Slice("bar2a"));
@@ -5028,7 +5034,6 @@ TEST_P(TransactionTest, DuplicateKeys) {
     ASSERT_OK(s);
     s = txn0->SingleDelete(Slice("foo4"));
     ASSERT_OK(s);
-    ASSERT_EQ(4, txn0->GetWriteBatch()->DuplicateKeysCnt());
     if (do_prepare) {
       s = txn0->Prepare();
       ASSERT_OK(s);
@@ -5045,7 +5050,7 @@ TEST_P(TransactionTest, DuplicateKeys) {
 
     s = db->Get(ropt, db->DefaultColumnFamily(), "foo0", &pinnable_val);
     ASSERT_OK(s);
-    ASSERT_TRUE(pinnable_val == ("bar0b"));
+    ASSERT_TRUE(pinnable_val == ("bar0c"));
     s = db->Get(ropt, db->DefaultColumnFamily(), "foo1", &pinnable_val);
     ASSERT_OK(s);
     ASSERT_TRUE(pinnable_val == ("bar1"));
