@@ -240,8 +240,13 @@ Status WritePreparedTxn::CommitInternal() {
   auto prepare_seq = GetId();
   const bool includes_data = !empty && !for_recovery;
   assert(prepare_batch_cnt_);
-  // TODO(myabandeh): assign these numbers
-  size_t commit_batch_cnt = includes_data ? 1 : 0;
+  size_t commit_batch_cnt = 0;
+  if (includes_data) {
+    BatchCounter counter;
+    auto s = working_batch->Iterate(&counter);
+    assert(s.ok());
+    commit_batch_cnt = counter.BatchCnt();
+  }
   WritePreparedCommitEntryPreReleaseCallback update_commit_map(
       wpt_db_, db_impl_, prepare_seq, prepare_batch_cnt_, commit_batch_cnt);
   const bool disable_memtable = !includes_data;
