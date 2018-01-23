@@ -62,17 +62,17 @@ Iterator* WritePreparedTxn::GetIterator(const ReadOptions& options,
   return write_batch_.NewIteratorWithBase(column_family, db_iter);
 }
 
-struct BatchCounter : public WriteBatch::Handler {
-  struct KeyComparator {
-    bool operator()(const std::pair<uint32_t, Slice>& lhs,
-                    const std::pair<uint32_t, Slice>& rhs) const {
-      if (lhs.first != rhs.first) {
-        return lhs.first < rhs.first;
-      }
-      return lhs.second.compare(rhs.second) < 0;
+struct CFKeyComparator {
+  bool operator()(const std::pair<uint32_t, Slice>& lhs,
+                  const std::pair<uint32_t, Slice>& rhs) const {
+    if (lhs.first != rhs.first) {
+      return lhs.first < rhs.first;
     }
-  };
-  std::set<std::pair<uint32_t, Slice>, KeyComparator> keys_;
+    return lhs.second.compare(rhs.second) < 0;
+  }
+};
+struct BatchCounter : public WriteBatch::Handler {
+  std::set<std::pair<uint32_t, Slice>, CFKeyComparator> keys_;
   size_t batches_;
   BatchCounter() : batches_(1) {}
   size_t BatchCnt() { return batches_; }
@@ -266,22 +266,28 @@ Status WritePreparedTxn::RollbackInternal() {
   assert(GetId() > 0);
   // In WritePrepared, the txn is is the same as prepare seq
   auto last_visible_txn = GetId() - 1;
-  // TODO(myabandeh): handle duplicate keys
   struct RollbackWriteBatchBuilder : public WriteBatch::Handler {
     DBImpl* db_;
     ReadOptions roptions;
     WritePreparedTxnReadCallback callback;
     WriteBatch* rollback_batch_;
+    std::set<std::pair<uint32_t, Slice>, CFKeyComparator> keys_;
     RollbackWriteBatchBuilder(DBImpl* db, WritePreparedTxnDB* wpt_db,
                               SequenceNumber snap_seq, WriteBatch* dst_batch)
         : db_(db), callback(wpt_db, snap_seq), rollback_batch_(dst_batch) {}
 
     Status Rollback(uint32_t cf, const Slice& key) {
+      Status s;
+      auto size = keys_.size();
+      keys_.insert({cf, key});
+      if (size == keys_.size()) {  // duplicate key
+        return s;
+      }
       PinnableSlice pinnable_val;
       bool not_used;
       auto cf_handle = db_->GetColumnFamilyHandle(cf);
-      auto s = db_->GetImpl(roptions, cf_handle, key, &pinnable_val, &not_used,
-                            &callback);
+      s = db_->GetImpl(roptions, cf_handle, key, &pinnable_val, &not_used,
+                       &callback);
       assert(s.ok() || s.IsNotFound());
       if (s.ok()) {
         s = rollback_batch_->Put(cf_handle, key, pinnable_val);
@@ -339,9 +345,8 @@ Status WritePreparedTxn::RollbackInternal() {
   const size_t ONE_BATCH = 1;
   WritePreparedCommitEntryPreReleaseCallback update_commit_map(
       wpt_db_, db_impl_, kMaxSequenceNumber, ZERO_PREPARES, ONE_BATCH);
-  size_t batch_cnt = 1;
   s = db_impl_->WriteImpl(write_options_, &rollback_batch, nullptr, nullptr,
-                          no_log_ref, !DISABLE_MEMTABLE, &seq_used, batch_cnt,
+                          no_log_ref, !DISABLE_MEMTABLE, &seq_used, ONE_BATCH,
                           do_one_write ? &update_commit_map : nullptr);
   assert(!s.ok() || seq_used != kMaxSequenceNumber);
   if (!s.ok()) {
@@ -366,7 +371,7 @@ Status WritePreparedTxn::RollbackInternal() {
   // In the absence of Prepare markers, use Noop as a batch separator
   WriteBatchInternal::InsertNoop(&empty_batch);
   s = db_impl_->WriteImpl(write_options_, &empty_batch, nullptr, nullptr,
-                          no_log_ref, DISABLE_MEMTABLE, &seq_used, batch_cnt,
+                          no_log_ref, DISABLE_MEMTABLE, &seq_used, ONE_BATCH,
                           &update_commit_map_with_prepare);
   assert(!s.ok() || seq_used != kMaxSequenceNumber);
   // Mark the txn as rolled back

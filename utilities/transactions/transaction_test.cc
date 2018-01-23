@@ -5000,69 +5000,91 @@ TEST_P(TransactionTest, DuplicateKeys) {
   }
 
   for (bool do_prepare : {true, false}) {
-    TransactionOptions txn_options;
-    WriteOptions write_options;
-    Transaction* txn0 = db->BeginTransaction(write_options, txn_options);
-    auto s = txn0->SetName("xid");
-    ASSERT_OK(s);
-    s = txn0->Put(Slice("foo0"), Slice("bar0a"));
-    ASSERT_OK(s);
-    s = txn0->Put(Slice("foo0"), Slice("bar0b"));
-    ASSERT_OK(s);
-    s = txn0->Put(Slice("foo1"), Slice("bar1"));
-    ASSERT_OK(s);
-    s = txn0->Merge(Slice("foo2"), Slice("bar2a"));
-    ASSERT_OK(s);
-    // Repeat a key after the start of a sub-patch. This should not cause a
-    // duplicate in the most recent sub-patch and hence not creating a new
-    // sub-patch.
-    s = txn0->Put(Slice("foo0"), Slice("bar0c"));
-    ASSERT_OK(s);
-    // TODO(myabandeh): enable this after duplicatae merge keys are supported
-    // s = txn0->Merge(Slice("foo2"), Slice("bar2a"));
-    // ASSERT_OK(s);
-    s = txn0->Put(Slice("foo2"), Slice("bar2b"));
-    ASSERT_OK(s);
-    s = txn0->Put(Slice("foo3"), Slice("bar3"));
-    ASSERT_OK(s);
-    // TODO(myabandeh): enable this after duplicatae merge keys are supported
-    // s = txn0->Merge(Slice("foo3"), Slice("bar3"));
-    // ASSERT_OK(s);
-    s = txn0->Put(Slice("foo4"), Slice("bar4"));
-    ASSERT_OK(s);
-    s = txn0->Delete(Slice("foo4"));
-    ASSERT_OK(s);
-    s = txn0->SingleDelete(Slice("foo4"));
-    ASSERT_OK(s);
-    if (do_prepare) {
-      s = txn0->Prepare();
+    for (bool do_rollback : {true, false}) {
+      ReOpen();
+      TransactionOptions txn_options;
+      WriteOptions write_options;
+      Transaction* txn0 = db->BeginTransaction(write_options, txn_options);
+      auto s = txn0->SetName("xid");
       ASSERT_OK(s);
-    }
-    s = txn0->Commit();
-    ASSERT_OK(s);
-    if (!do_prepare) {
-      auto pdb = reinterpret_cast<PessimisticTransactionDB*>(db);
-      pdb->UnregisterTransaction(txn0);
-    }
-    delete txn0;
-    ReadOptions ropt;
-    PinnableSlice pinnable_val;
+      s = txn0->Put(Slice("foo0"), Slice("bar0a"));
+      ASSERT_OK(s);
+      s = txn0->Put(Slice("foo0"), Slice("bar0b"));
+      ASSERT_OK(s);
+      s = txn0->Put(Slice("foo1"), Slice("bar1"));
+      ASSERT_OK(s);
+      s = txn0->Merge(Slice("foo2"), Slice("bar2a"));
+      ASSERT_OK(s);
+      // Repeat a key after the start of a sub-patch. This should not cause a
+      // duplicate in the most recent sub-patch and hence not creating a new
+      // sub-patch.
+      s = txn0->Put(Slice("foo0"), Slice("bar0c"));
+      ASSERT_OK(s);
+      // TODO(myabandeh): enable this after duplicatae merge keys are supported
+      // s = txn0->Merge(Slice("foo2"), Slice("bar2a"));
+      // ASSERT_OK(s);
+      s = txn0->Put(Slice("foo2"), Slice("bar2b"));
+      ASSERT_OK(s);
+      s = txn0->Put(Slice("foo3"), Slice("bar3"));
+      ASSERT_OK(s);
+      // TODO(myabandeh): enable this after duplicatae merge keys are supported
+      // s = txn0->Merge(Slice("foo3"), Slice("bar3"));
+      // ASSERT_OK(s);
+      s = txn0->Put(Slice("foo4"), Slice("bar4"));
+      ASSERT_OK(s);
+      s = txn0->Delete(Slice("foo4"));
+      ASSERT_OK(s);
+      s = txn0->SingleDelete(Slice("foo4"));
+      ASSERT_OK(s);
+      if (do_prepare) {
+        s = txn0->Prepare();
+        ASSERT_OK(s);
+      }
+      if (do_rollback) {
+        // Test rolling back the batch with duplicates
+        s = txn0->Rollback();
+        ASSERT_OK(s);
+      } else {
+        s = txn0->Commit();
+        ASSERT_OK(s);
+      }
+      if (!do_prepare && !do_rollback) {
+        auto pdb = reinterpret_cast<PessimisticTransactionDB*>(db);
+        pdb->UnregisterTransaction(txn0);
+      }
+      delete txn0;
+      ReadOptions ropt;
+      PinnableSlice pinnable_val;
 
-    s = db->Get(ropt, db->DefaultColumnFamily(), "foo0", &pinnable_val);
-    ASSERT_OK(s);
-    ASSERT_TRUE(pinnable_val == ("bar0c"));
-    s = db->Get(ropt, db->DefaultColumnFamily(), "foo1", &pinnable_val);
-    ASSERT_OK(s);
-    ASSERT_TRUE(pinnable_val == ("bar1"));
-    s = db->Get(ropt, db->DefaultColumnFamily(), "foo2", &pinnable_val);
-    ASSERT_OK(s);
-    ASSERT_TRUE(pinnable_val == ("bar2b"));
-    s = db->Get(ropt, db->DefaultColumnFamily(), "foo3", &pinnable_val);
-    ASSERT_OK(s);
-    ASSERT_TRUE(pinnable_val == ("bar3"));
-    s = db->Get(ropt, db->DefaultColumnFamily(), "foo4", &pinnable_val);
-    ASSERT_TRUE(s.IsNotFound());
-  }
+      if (do_rollback) {
+        s = db->Get(ropt, db->DefaultColumnFamily(), "foo0", &pinnable_val);
+        ASSERT_TRUE(s.IsNotFound());
+        s = db->Get(ropt, db->DefaultColumnFamily(), "foo1", &pinnable_val);
+        ASSERT_TRUE(s.IsNotFound());
+        s = db->Get(ropt, db->DefaultColumnFamily(), "foo2", &pinnable_val);
+        ASSERT_TRUE(s.IsNotFound());
+        s = db->Get(ropt, db->DefaultColumnFamily(), "foo3", &pinnable_val);
+        ASSERT_TRUE(s.IsNotFound());
+        s = db->Get(ropt, db->DefaultColumnFamily(), "foo4", &pinnable_val);
+        ASSERT_TRUE(s.IsNotFound());
+      } else {
+        s = db->Get(ropt, db->DefaultColumnFamily(), "foo0", &pinnable_val);
+        ASSERT_OK(s);
+        ASSERT_TRUE(pinnable_val == ("bar0c"));
+        s = db->Get(ropt, db->DefaultColumnFamily(), "foo1", &pinnable_val);
+        ASSERT_OK(s);
+        ASSERT_TRUE(pinnable_val == ("bar1"));
+        s = db->Get(ropt, db->DefaultColumnFamily(), "foo2", &pinnable_val);
+        ASSERT_OK(s);
+        ASSERT_TRUE(pinnable_val == ("bar2b"));
+        s = db->Get(ropt, db->DefaultColumnFamily(), "foo3", &pinnable_val);
+        ASSERT_OK(s);
+        ASSERT_TRUE(pinnable_val == ("bar3"));
+        s = db->Get(ropt, db->DefaultColumnFamily(), "foo4", &pinnable_val);
+        ASSERT_TRUE(s.IsNotFound());
+      }
+    }  // do_rollback
+  }    // do_prepare
 }
 
 }  // namespace rocksdb
