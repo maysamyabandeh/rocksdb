@@ -28,7 +28,7 @@ class MockMemTableRep : public MemTableRep {
     return rep_->Allocate(len, buf);
   }
 
-  virtual void Insert(KeyHandle handle) override {
+  virtual bool Insert(KeyHandle handle) override {
     return rep_->Insert(handle);
   }
 
