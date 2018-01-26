@@ -1106,6 +1106,9 @@ class MemTableInserter : public WriteBatch::Handler {
 
     MemTable* mem = cf_mems_->GetMemTable();
     auto* moptions = mem->GetImmutableMemTableOptions();
+    // inplace_update_support is inconsistent with snapshots, and therefore with
+    // any kind of transactions including the ones that use seq_per_batch
+    assert(!seq_per_batch_ || !moptions->inplace_update_support);
     if (!moptions->inplace_update_support) {
       bool mem_res = true;
       mem_res =
@@ -1119,7 +1122,7 @@ class MemTableInserter : public WriteBatch::Handler {
       }
     } else if (moptions->inplace_callback == nullptr) {
       assert(!concurrent_memtable_writes_);
-      ret_status = mem->Update(sequence_, key, value);
+      mem->Update(sequence_, key, value);
     } else {
       assert(!concurrent_memtable_writes_);
       if (mem->UpdateCallback(sequence_, key, value)) {
@@ -1152,11 +1155,20 @@ class MemTableInserter : public WriteBatch::Handler {
                                                  value, &merged_value);
         if (status == UpdateStatus::UPDATED_INPLACE) {
           // prev_value is updated in-place with final value.
-          mem->Add(sequence_, value_type, key, Slice(prev_buffer, prev_size));
+#ifndef NDEBUG
+          bool mem_res =
+#endif
+              mem->Add(sequence_, value_type, key,
+                       Slice(prev_buffer, prev_size));
+          assert(mem_res);
           RecordTick(moptions->statistics, NUMBER_KEYS_WRITTEN);
         } else if (status == UpdateStatus::UPDATED) {
           // merged_value contains the final value.
-          mem->Add(sequence_, value_type, key, Slice(merged_value));
+#ifndef NDEBUG
+          bool mem_res =
+#endif
+              mem->Add(sequence_, value_type, key, Slice(merged_value));
+          assert(mem_res);
           RecordTick(moptions->statistics, NUMBER_KEYS_WRITTEN);
         }
       }

@@ -767,8 +767,9 @@ bool MemTable::Get(const LookupKey& key, std::string* value, Status* s,
   return found_final_value;
 }
 
-Status MemTable::Update(SequenceNumber seq, const Slice& key,
-                        const Slice& value) {
+void MemTable::Update(SequenceNumber seq,
+                      const Slice& key,
+                      const Slice& value) {
   LookupKey lkey(key, seq);
   Slice mem_key = lkey.memtable_key();
 
@@ -812,15 +813,19 @@ Status MemTable::Update(SequenceNumber seq, const Slice& key,
                  (unsigned)(VarintLength(key_length) + key_length +
                             VarintLength(value.size()) + value.size()));
           RecordTick(moptions_.statistics, NUMBER_KEYS_UPDATED);
-          return Status::OK();
+          return;
         }
       }
     }
   }
 
   // key doesn't exist
-  Add(seq, kTypeValue, key, value);
-  return Status::OK();
+#ifndef NDEBUG
+  bool add_res =
+#endif
+      Add(seq, kTypeValue, key, value);
+  // We already checked unused != seq above. In that case, Add should not fail.
+  assert(add_res);
 }
 
 bool MemTable::UpdateCallback(SequenceNumber seq,
