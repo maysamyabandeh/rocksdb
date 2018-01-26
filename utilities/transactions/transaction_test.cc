@@ -4979,13 +4979,23 @@ TEST_P(TransactionTest, SeqAdvanceTest) {
 
 // Test that the transactional db can handle duplicate keys in the write batch
 TEST_P(TransactionTest, DuplicateKeys) {
+  ColumnFamilyOptions cf_options;
+  std::string cf_name = "two";
+  ColumnFamilyHandle* cf_handle = nullptr;
   {
+    db->CreateColumnFamily(cf_options, cf_name, &cf_handle);
     WriteOptions write_options;
     WriteBatch batch;
     batch.Put(Slice("key"), Slice("value"));
     batch.Put(Slice("key2"), Slice("value2"));
+    // duplicate the keys
     batch.Put(Slice("key"), Slice("value3"));
+    // duplicate the 2nd key. It should not be counted duplicate since a
+    // sub-patch is cut after the last duplicate.
     batch.Put(Slice("key2"), Slice("value4"));
+    // duplicate the keys but in a different cf. It should not be counted as
+    // duplicate keys
+    batch.Put(cf_handle, Slice("key"), Slice("value5"));
 
     ASSERT_OK(db->Write(write_options, &batch));
 
@@ -4997,6 +5007,11 @@ TEST_P(TransactionTest, DuplicateKeys) {
     s = db->Get(ropt, db->DefaultColumnFamily(), "key2", &pinnable_val);
     ASSERT_OK(s);
     ASSERT_TRUE(pinnable_val == ("value4"));
+    s = db->Get(ropt, cf_handle, "key", &pinnable_val);
+    ASSERT_OK(s);
+    ASSERT_TRUE(pinnable_val == ("value5"));
+
+    delete cf_handle;
   }
 
   for (bool do_prepare : {true, false}) {
@@ -5009,6 +5024,7 @@ TEST_P(TransactionTest, DuplicateKeys) {
           continue;
         }
         ReOpen();
+        db->CreateColumnFamily(cf_options, cf_name, &cf_handle);
         TransactionOptions txn_options;
         txn_options.use_only_the_last_commit_time_batch_for_recovery = false;
         WriteOptions write_options;
@@ -5032,6 +5048,10 @@ TEST_P(TransactionTest, DuplicateKeys) {
         // supported s = txn0->Merge(Slice("foo2"), Slice("bar2a"));
         // ASSERT_OK(s);
         s = txn0->Put(Slice("foo2"), Slice("bar2b"));
+        ASSERT_OK(s);
+        // duplicate the keys but in a different cf. It should not be counted as
+        // duplicate.
+        s = txn0->Put(cf_handle, Slice("foo0"), Slice("bar0-cf1"));
         ASSERT_OK(s);
         s = txn0->Put(Slice("foo3"), Slice("bar3"));
         ASSERT_OK(s);
@@ -5088,6 +5108,8 @@ TEST_P(TransactionTest, DuplicateKeys) {
         if (do_rollback) {
           s = db->Get(ropt, db->DefaultColumnFamily(), "foo0", &pinnable_val);
           ASSERT_TRUE(s.IsNotFound());
+          s = db->Get(ropt, cf_handle, "foo0", &pinnable_val);
+          ASSERT_TRUE(s.IsNotFound());
           s = db->Get(ropt, db->DefaultColumnFamily(), "foo1", &pinnable_val);
           ASSERT_TRUE(s.IsNotFound());
           s = db->Get(ropt, db->DefaultColumnFamily(), "foo2", &pinnable_val);
@@ -5100,6 +5122,9 @@ TEST_P(TransactionTest, DuplicateKeys) {
           s = db->Get(ropt, db->DefaultColumnFamily(), "foo0", &pinnable_val);
           ASSERT_OK(s);
           ASSERT_TRUE(pinnable_val == ("bar0c"));
+          s = db->Get(ropt, cf_handle, "foo0", &pinnable_val);
+          ASSERT_OK(s);
+          ASSERT_TRUE(pinnable_val == ("bar0-cf1"));
           s = db->Get(ropt, db->DefaultColumnFamily(), "foo1", &pinnable_val);
           ASSERT_OK(s);
           ASSERT_TRUE(pinnable_val == ("bar1"));
@@ -5119,6 +5144,7 @@ TEST_P(TransactionTest, DuplicateKeys) {
             ASSERT_TRUE(s.IsNotFound());
           }
         }
+        delete cf_handle;
       }  // with_commit_batch
     }    // do_rollback
   }      // do_prepare
