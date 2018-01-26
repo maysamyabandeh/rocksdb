@@ -45,6 +45,7 @@
 #include <stdlib.h>
 #include <algorithm>
 #include <atomic>
+#include "port/likely.h"
 #include "port/port.h"
 #include "util/allocator.h"
 #include "util/random.h"
@@ -801,6 +802,17 @@ bool InlineSkipList<Comparator>::Insert(const char* key, Splice* splice,
   if (UseCAS) {
     for (int i = 0; i < height; ++i) {
       while (true) {
+        // Checking for duplicate keys on the level 0 is sufficient
+        if (UNLIKELY(i == 0 && splice->next_[i] != nullptr &&
+                     compare_(x->Key(), splice->next_[i]->Key()) >= 0)) {
+          // duplicate key
+          return false;
+        }
+        if (UNLIKELY(i == 0 && splice->prev_[i] != head_ &&
+                     compare_(splice->prev_[i]->Key(), x->Key()) >= 0)) {
+          // duplicate key
+          return false;
+        }
         assert(splice->next_[i] == nullptr ||
                compare_(x->Key(), splice->next_[i]->Key()) < 0);
         assert(splice->prev_[i] == head_ ||
@@ -833,12 +845,15 @@ bool InlineSkipList<Comparator>::Insert(const char* key, Splice* splice,
         FindSpliceForLevel<false>(key, splice->prev_[i], nullptr, i, &splice->prev_[i],
                            &splice->next_[i]);
       }
-      if ((splice->next_[i] != nullptr &&
-           compare_(x->Key(), splice->next_[i]->Key()) >= 0)) {
+      // Checking for duplicate keys on the level 0 is sufficient
+      if (UNLIKELY(i == 0 && splice->next_[i] != nullptr &&
+                   compare_(x->Key(), splice->next_[i]->Key()) >= 0)) {
+        // duplicate key
         return false;
       }
-      if ((splice->prev_[i] != head_ &&
-           compare_(splice->prev_[i]->Key(), x->Key()) >= 0)) {
+      if (UNLIKELY(i == 0 && splice->prev_[i] != head_ &&
+                   compare_(splice->prev_[i]->Key(), x->Key()) >= 0)) {
+        // duplicate key
         return false;
       }
       assert(splice->next_[i] == nullptr ||
