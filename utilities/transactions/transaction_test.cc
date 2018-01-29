@@ -5148,6 +5148,31 @@ TEST_P(TransactionTest, DuplicateKeys) {
       }  // with_commit_batch
     }    // do_rollback
   }      // do_prepare
+
+  {
+    // Also test with max_successive_merges > 0. max_successive_merges will not
+    // affect our algorithm for duplicate key insertion but we add the test to
+    // verify that.
+    cf_options.max_successive_merges = 2;
+    cf_options.merge_operator = MergeOperators::CreateStringAppendOperator();
+    ReOpen();
+    db->CreateColumnFamily(cf_options, cf_name, &cf_handle);
+    WriteOptions write_options;
+    // Ensure one value for the key
+    db->Put(write_options, cf_handle, Slice("key"), Slice("value"));
+    WriteBatch batch;
+    // Merge more than max_successive_merges times
+    batch.Merge(cf_handle, Slice("key"), Slice("1"));
+    batch.Merge(cf_handle, Slice("key"), Slice("2"));
+    batch.Merge(cf_handle, Slice("key"), Slice("3"));
+    batch.Merge(cf_handle, Slice("key"), Slice("4"));
+    ASSERT_OK(db->Write(write_options, &batch));
+    ReadOptions read_options;
+    string value;
+    ASSERT_OK(db->Get(read_options, cf_handle, "key", &value));
+    ASSERT_EQ(value, "value,1,2,3,4");
+    delete cf_handle;
+  }
 }
 
 }  // namespace rocksdb
