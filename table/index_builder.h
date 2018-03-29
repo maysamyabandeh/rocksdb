@@ -151,6 +151,10 @@ class ShortenedIndexBuilder : public IndexBuilder {
 
     std::string handle_encoding;
     block_handle.EncodeTo(&handle_encoding);
+    value_size_ += handle_encoding.size();
+    //auto keywithoutprefix = last_key_in_current_block->substr(std::min((size_t)10, last_key_in_current_block->size()));
+    //key_size_ += keywithoutprefix.size();
+    key_size_ += last_key_in_current_block->size();
     std::string handle_delta_encoding;
     PutVarsignedint64(&handle_delta_encoding,
                       block_handle.size() - last_encoded_handle_.size());
@@ -165,6 +169,8 @@ class ShortenedIndexBuilder : public IndexBuilder {
     }
   }
 
+  uint64_t value_size_ = 0;
+  uint64_t key_size_ = 0;
   using IndexBuilder::Finish;
   virtual Status Finish(
       IndexBlocks* index_blocks,
@@ -175,6 +181,9 @@ class ShortenedIndexBuilder : public IndexBuilder {
       index_blocks->index_block_contents =
           index_block_builder_without_seq_.Finish();
     }
+    printf("key size: %lu\n", key_size_);
+    printf("value size: %lu\n", value_size_);
+    printf("total size: %zu\n", index_block_builder_.CurrentSizeEstimate());
     return Status::OK();
   }
 

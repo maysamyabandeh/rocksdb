@@ -39,6 +39,8 @@ class SstFileReader {
       const std::vector<std::pair<CompressionType, const char*>>&
           compression_types);
 
+  void Rewrite();
+
  private:
   // Get the TableReader implementation for the sst file
   Status GetTableReader(const std::string& file_path);
