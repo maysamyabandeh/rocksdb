@@ -29,6 +29,7 @@
 #include "rocksdb/table_properties.h"
 #include "rocksdb/utilities/ldb_cmd.h"
 #include "table/block.h"
+#include "table/block_based_table_reader.h"
 #include "table/block_based_table_builder.h"
 #include "table/block_based_table_factory.h"
 #include "table/block_builder.h"
@@ -150,6 +151,52 @@ Status SstFileReader::DumpTable(const std::string& out_filename) {
   Status s = table_reader_->DumpTable(out_file.get());
   out_file->Close();
   return s;
+}
+
+void SstFileReader::Rewrite() {
+  // TODO(myabandeh): set the options based on the current SST settings
+  CompressionOptions compress_opt;
+  std::string column_family_name;
+  int unknown_level = -1;
+  Options opts;
+  const ImmutableCFOptions imoptions(opts);
+  rocksdb::InternalKeyComparator ikc(opts.comparator);
+  std::vector<std::unique_ptr<IntTblPropCollectorFactory>>
+      block_based_table_factories;
+  TableBuilderOptions tb_options(imoptions, ikc, &block_based_table_factories,
+                              CompressionType::kNoCompression, compress_opt,
+                              nullptr /* compression_dict */,
+                              false /* skip_filters */, column_family_name,
+                              unknown_level);
+  const char* fname = "new.sst";
+  const size_t block_size = 1024 * 16;
+
+  unique_ptr<WritableFile> out_file;
+  Env* env = Env::Default();
+  env->NewWritableFile(fname, &out_file, soptions_);
+  unique_ptr<WritableFileWriter> dest_writer;
+  dest_writer.reset(new WritableFileWriter(std::move(out_file), soptions_));
+  BlockBasedTableOptions table_options;
+  table_options.block_size = block_size;
+  BlockBasedTableFactory block_based_tf(table_options);
+  unique_ptr<TableBuilder> table_builder;
+  table_builder.reset(block_based_tf.NewTableBuilder(
+      tb_options,
+      TablePropertiesCollectorFactory::Context::kUnknownColumnFamily,
+      dest_writer.get()));
+  unique_ptr<InternalIterator> iter(table_reader_->NewIterator(ReadOptions()));
+  for (iter->SeekToFirst(); iter->Valid(); iter->Next()) {
+    if (!iter->status().ok()) {
+      fputs(iter->status().ToString().c_str(), stderr);
+      exit(1);
+    }
+    table_builder->Add(iter->key(), iter->value());
+  }
+  Status s = table_builder->Finish();
+  if (!s.ok()) {
+    fputs(s.ToString().c_str(), stderr);
+    exit(1);
+  }
 }
 
 uint64_t SstFileReader::CalculateCompressedTableSize(
@@ -283,6 +330,95 @@ Status SstFileReader::SetOldTableOptions() {
   return Status::OK();
 }
 
+class Trie {
+  public:
+    Trie(std::vector<std::string>& keys) : keys_(keys) {}
+    void Construct(size_t offset, size_t start, size_t end) {
+      start_ = start;
+      end_ = end;
+      offset_ = offset;
+      if (start_ + 1 == end_) {
+        right_i_ = end_;
+        return;
+      }
+      size_t i;
+      size_t byte_offset = offset / 8;
+      size_t bit_offset = offset % 8;
+      for (i = start; i < end; i++) {
+        if (keys_[i].size() <= byte_offset) {
+          continue;
+        }
+        auto byte_at = (unsigned char)keys_[i][byte_offset];
+        if ((byte_at >> (7 - bit_offset)) & (unsigned char) 0x1) {
+          break;
+        }
+      }
+      right_i_ = i;
+      if (start_ != right_i_) {
+        left_ = new Trie(keys_);
+        left_->Construct(offset + 1, start_, right_i_);
+      }
+      if (right_i_ != end_) {
+        right_ = new Trie(keys_);
+        right_->Construct(offset + 1, right_i_, end_);
+      }
+    }
+    void RepresentTree() {
+      printf("%s %zu\n", std::string(offset_, '-').c_str(), end_ - start_);
+      if (left_) {
+        left_->RepresentTree();
+      }
+      if (right_) {
+        right_->RepresentTree();
+      }
+    }
+    void RepresentLeftSize() {
+      printf("%zu\n", right_i_ - start_);
+      if (left_) {
+        left_->RepresentLeftSize();
+      }
+      if (right_) {
+        right_->RepresentLeftSize();
+      }
+    }
+
+    size_t NumberCountLeftSize() {
+      size_t encode_size = 0;
+      encode_size++;
+      if (left_) {
+        encode_size += left_->NumberCountLeftSize();
+      }
+      if (right_) {
+        encode_size += right_->NumberCountLeftSize();
+      }
+      return encode_size;
+    }
+
+    size_t EncodeLeftSize(std::string* buf) {
+      PutVarint32(buf, right_i_ - start_);
+      if (left_) {
+        left_->EncodeLeftSize(buf);
+      }
+      if (right_) {
+        right_->EncodeLeftSize(buf);
+      }
+      return buf->size();
+    }
+
+    void Represent() {
+      //RepresentTree();
+      RepresentLeftSize();
+    }
+  private:
+    size_t start_;
+    size_t end_;
+    size_t right_i_;
+    size_t offset_;
+    Trie* left_ = nullptr;
+    Trie* right_ = nullptr;
+    std::vector<std::string> keys_;
+};
+
 Status SstFileReader::ReadSequential(bool print_kv, uint64_t read_num,
                                      bool has_from, const std::string& from_key,
                                      bool has_to, const std::string& to_key,
@@ -291,8 +427,12 @@ Status SstFileReader::ReadSequential(bool print_kv, uint64_t read_num,
     return init_result_;
   }
 
-  InternalIterator* iter =
-      table_reader_->NewIterator(ReadOptions(verify_checksum_, false));
+  auto rep = ((BlockBasedTable*) table_reader_.get())->get_rep();
+  auto index_entry = rep->index_reader.get();
+  assert(index_entry);
+  InternalIterator* iter = index_entry->NewIterator();
+  //InternalIterator* iter =
+  //    table_reader_->NewIterator(ReadOptions(verify_checksum_, false));
   uint64_t i = 0;
   if (has_from) {
     InternalKey ikey;
@@ -301,6 +441,7 @@ Status SstFileReader::ReadSequential(bool print_kv, uint64_t read_num,
   } else {
     iter->SeekToFirst();
   }
+  std::vector<std::string> keys;
   for (; iter->Valid(); iter->Next()) {
     Slice key = iter->key();
     Slice value = iter->value();
@@ -326,12 +467,19 @@ Status SstFileReader::ReadSequential(bool print_kv, uint64_t read_num,
       break;
     }
 
+    keys.push_back(key.ToString());
     if (print_kv) {
-      fprintf(stdout, "%s => %s\n",
+      fprintf(stdout, "Index %s => %s\n",
           ikey.DebugString(output_hex_).c_str(),
           value.ToString(output_hex_).c_str());
     }
   }
+  Trie tree(keys);
+  tree.Construct(0, 0, keys.size());
+  //tree.Represent();
+  std::string buf;
+  printf("Encode count = %zu\n", tree.NumberCountLeftSize());
+  printf("Encode size = %zu\n", tree.EncodeLeftSize(&buf));
 
   read_num_ += i;
 
@@ -358,13 +506,14 @@ void print_help() {
     --file=<data_dir_OR_sst_file>
       Path to SST file or directory containing SST files
 
-    --command=check|scan|raw|verify
+    --command=check|scan|raw|verify|rewrite
         check: Iterate over entries in files but dont print anything except if an error is encounterd (default command)
         scan: Iterate over entries in files and print them to screen
         raw: Dump all the table contents to <file_name>_dump.txt
         verify: Iterate all the blocks in files verifying checksum to detect possible coruption but dont print anything except if a corruption is encountered
         recompress: reports the SST file size if recompressed with different
                     compression types
+        rewrite: rewrite the SST file in ./new.sst to debug the write path.
 
     --output_hex
       Can be combined with scan command to print the keys and values in Hex
@@ -605,6 +754,10 @@ int SSTDumpTool::Run(int argc, char** argv) {
       if (read_num > 0 && total_read > read_num) {
         break;
       }
+    }
+
+    if (command == "rewrite") {
+      reader.Rewrite();
     }
 
     if (command == "verify") {

@@ -131,14 +131,23 @@ class ShortenedIndexBuilder : public IndexBuilder {
 
     std::string handle_encoding;
     block_handle.EncodeTo(&handle_encoding);
+    value_size_ += handle_encoding.size();
+    //auto keywithoutprefix = last_key_in_current_block->substr(std::min((size_t)10, last_key_in_current_block->size()));
+    //key_size_ += keywithoutprefix.size();
+    key_size_ += last_key_in_current_block->size();
     index_block_builder_.Add(*last_key_in_current_block, handle_encoding);
   }
 
+  uint64_t value_size_ = 0;
+  uint64_t key_size_ = 0;
   using IndexBuilder::Finish;
   virtual Status Finish(
       IndexBlocks* index_blocks,
       const BlockHandle& /*last_partition_block_handle*/) override {
     index_blocks->index_block_contents = index_block_builder_.Finish();
+    printf("key size: %lu\n", key_size_);
+    printf("value size: %lu\n", value_size_);
+    printf("total size: %zu\n", index_block_builder_.CurrentSizeEstimate());
     return Status::OK();
   }
 
