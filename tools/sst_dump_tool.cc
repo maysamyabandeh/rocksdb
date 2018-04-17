@@ -338,7 +338,7 @@ class Trie {
       end_ = end;
       offset_ = offset;
       if (start_ + 1 == end_) {
-        right_i_ = end_;
+        right_i_ = start_;
         return;
       }
       size_t i;
@@ -384,7 +384,9 @@ class Trie {
 
     size_t NumberCountLeftSize() {
       size_t encode_size = 0;
-      encode_size++;
+      if (right_i_ != start_) {
+        encode_size++;
+      }
       if (left_) {
         encode_size += left_->NumberCountLeftSize();
       }
@@ -395,7 +397,9 @@ class Trie {
     }
 
     size_t EncodeLeftSize(std::string* buf) {
-      PutVarint32(buf, right_i_ - start_);
+      if (right_i_ != start_) {
+        PutVarint32(buf, right_i_ - start_);
+      }
       if (left_) {
         left_->EncodeLeftSize(buf);
       }
