@@ -427,8 +427,13 @@ class Trie {
         }
       } else {
         auto bh = values_[start_];
-        PutVarint32(buf, bh.size() * 2);
         // * 2 to count a bit for value type
+        // * 2 to count a bit for offset/size type
+        if (start_ % 5 == 0) {
+          PutVarint32(buf, bh.offset() * 2 * 2);
+        } else {
+          PutVarint32(buf, bh.size() * 2 * 2);
+        }
       }
       return buf->size();
     }
