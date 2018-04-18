@@ -332,7 +332,7 @@ Status SstFileReader::SetOldTableOptions() {
 
 class Trie {
   public:
-    Trie(std::vector<std::string>& keys) : keys_(keys) {}
+    Trie(std::vector<std::string>& keys, std::vector<BlockHandle>& values) : keys_(keys), values_(values) {}
     void Construct(size_t offset, size_t start, size_t end) {
       start_ = start;
       end_ = end;
@@ -355,11 +355,11 @@ class Trie {
       }
       right_i_ = i;
       if (start_ != right_i_) {
-        left_ = new Trie(keys_);
+        left_ = new Trie(keys_, values_);
         left_->Construct(offset + 1, start_, right_i_);
       }
       if (right_i_ != end_) {
-        right_ = new Trie(keys_);
+        right_ = new Trie(keys_, values_);
         right_->Construct(offset + 1, right_i_, end_);
       }
     }
@@ -384,27 +384,51 @@ class Trie {
 
     size_t NumberCountLeftSize() {
       size_t encode_size = 0;
-      if (right_i_ != start_) {
+      if (!left_ && !right_) { // leaf
+        // do nothing
+      } else {
         encode_size++;
-      }
-      if (left_) {
-        encode_size += left_->NumberCountLeftSize();
-      }
-      if (right_) {
-        encode_size += right_->NumberCountLeftSize();
+        if (left_) {
+          encode_size += left_->NumberCountLeftSize();
+        }
+        if (right_) {
+          encode_size += right_->NumberCountLeftSize();
+        }
       }
       return encode_size;
     }
 
-    size_t EncodeLeftSize(std::string* buf) {
-      if (right_i_ != start_) {
+    size_t EncodeLeftCnt(std::string* buf) {
+      if (left_ || right_) {  // not leaf
         PutVarint32(buf, right_i_ - start_);
+        if (left_) {
+          left_->EncodeLeftCnt(buf);
+        }
+        if (right_) {
+          right_->EncodeLeftCnt(buf);
+        }
       }
-      if (left_) {
-        left_->EncodeLeftSize(buf);
-      }
-      if (right_) {
-        right_->EncodeLeftSize(buf);
+      return buf->size();
+    }
+
+    size_t EncodeLeftSize(std::string* buf) {
+      if (left_ || right_) {  // not leaf
+        std::string lbuf;
+        if (left_) {
+          left_->EncodeLeftSize(&lbuf);
+        }
+        PutVarint32(buf, lbuf.size() * 2);
+        // * 2 to account for 1 bit of tree/leave
+        buf->append(lbuf);
+        if (right_) {
+          right_->EncodeLeftSize(buf);
+        } else {
+          PutVarint32(buf, 0);
+        }
+      } else {
+        auto bh = values_[start_];
+        PutVarint32(buf, bh.size() * 2);
+        // * 2 to count a bit for value type
       }
       return buf->size();
     }
@@ -421,6 +445,7 @@ class Trie {
     Trie* left_ = nullptr;
     Trie* right_ = nullptr;
     std::vector<std::string> keys_;
+    std::vector<BlockHandle> values_;
 };
 
 Status SstFileReader::ReadSequential(bool print_kv, uint64_t read_num,
@@ -446,6 +471,7 @@ Status SstFileReader::ReadSequential(bool print_kv, uint64_t read_num,
     iter->SeekToFirst();
   }
   std::vector<std::string> keys;
+  std::vector<BlockHandle> values;
   for (; iter->Valid(); iter->Next()) {
     Slice key = iter->key();
     Slice value = iter->value();
@@ -472,18 +498,23 @@ Status SstFileReader::ReadSequential(bool print_kv, uint64_t read_num,
     }
 
     keys.push_back(key.ToString());
+    BlockHandle bh;
+    bh.DecodeFrom(&value);
+    values.push_back(bh);
     if (print_kv) {
       fprintf(stdout, "Index %s => %s\n",
           ikey.DebugString(output_hex_).c_str(),
           value.ToString(output_hex_).c_str());
     }
   }
-  Trie tree(keys);
+  Trie tree(keys, values);
   tree.Construct(0, 0, keys.size());
   //tree.Represent();
   std::string buf;
   printf("Encode count = %zu\n", tree.NumberCountLeftSize());
-  printf("Encode size = %zu\n", tree.EncodeLeftSize(&buf));
+  printf("Encode slit size = %zu\n", tree.EncodeLeftCnt(&buf));
+  buf.clear();
+  printf("Encode maysam size = %zu\n", tree.EncodeLeftSize(&buf));
 
   read_num_ += i;
 
