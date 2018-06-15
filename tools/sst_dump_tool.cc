@@ -165,10 +165,11 @@ void SstFileReader::Rewrite() {
   int unknown_level = -1;
   Options opts;
   const ImmutableCFOptions imoptions(opts);
+  const MutableCFOptions moptions(opts);
   rocksdb::InternalKeyComparator ikc(opts.comparator);
   std::vector<std::unique_ptr<IntTblPropCollectorFactory>>
       block_based_table_factories;
-  TableBuilderOptions tb_options(imoptions, ikc, &block_based_table_factories,
+  TableBuilderOptions tb_options(imoptions, moptions, ikc, &block_based_table_factories,
                               CompressionType::kNoCompression, compress_opt,
                               nullptr /* compression_dict */,
                               false /* skip_filters */, column_family_name,
@@ -183,13 +184,15 @@ void SstFileReader::Rewrite() {
   dest_writer.reset(new WritableFileWriter(std::move(out_file), soptions_));
   BlockBasedTableOptions table_options;
   table_options.block_size = block_size;
+  table_options.format_version = 4;
+  table_options.index_block_restart_interval = 16;
   BlockBasedTableFactory block_based_tf(table_options);
   unique_ptr<TableBuilder> table_builder;
   table_builder.reset(block_based_tf.NewTableBuilder(
       tb_options,
       TablePropertiesCollectorFactory::Context::kUnknownColumnFamily,
       dest_writer.get()));
-  unique_ptr<InternalIterator> iter(table_reader_->NewIterator(ReadOptions()));
+  unique_ptr<InternalIterator> iter(table_reader_->NewIterator(ReadOptions(), moptions_.prefix_extractor.get()));
   for (iter->SeekToFirst(); iter->Valid(); iter->Next()) {
     if (!iter->status().ok()) {
       fputs(iter->status().ToString().c_str(), stderr);
@@ -437,7 +440,7 @@ Status SstFileReader::ReadSequential(bool print_kv, uint64_t read_num,
   auto rep = ((BlockBasedTable*) table_reader_.get())->get_rep();
   auto index_entry = rep->index_reader.get();
   assert(index_entry);
-  InternalIterator* iter = index_entry->NewIterator();
+  InternalIteratorBase<rocksdb::BlockHandle>* iter = index_entry->NewIterator();
   //InternalIterator* iter =
   //    table_reader_->NewIterator(ReadOptions(verify_checksum_, false));
   uint64_t i = 0;
@@ -451,7 +454,7 @@ Status SstFileReader::ReadSequential(bool print_kv, uint64_t read_num,
   std::vector<std::string> keys;
   for (; iter->Valid(); iter->Next()) {
     Slice key = iter->key();
-    Slice value = iter->value();
+    BlockHandle value = iter->value();
     ++i;
     if (read_num > 0 && i > read_num)
       break;
@@ -476,9 +479,9 @@ Status SstFileReader::ReadSequential(bool print_kv, uint64_t read_num,
 
     keys.push_back(key.ToString());
     if (print_kv) {
-      fprintf(stdout, "Index %s => %s\n",
+      fprintf(stdout, "Index %s => %lu,%lu\n",
           ikey.DebugString(output_hex_).c_str(),
-          value.ToString(output_hex_).c_str());
+          value.offset(), value.size());
     }
   }
   Trie tree(keys);
