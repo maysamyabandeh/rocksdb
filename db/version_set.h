@@ -416,6 +416,8 @@ class VersionStorageInfo {
                               // is guaranteed to be empty.
   // Per-level max bytes
   std::vector<uint64_t> level_max_bytes_;
+  std::vector<size_t> llevel_max_runs_;
+  std::vector<size_t> llevel_fanout_;
 
   // A short brief metadata of files per level
   autovector<rocksdb::LevelFilesBrief> level_files_brief_;

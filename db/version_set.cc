@@ -1784,14 +1784,14 @@ void VersionStorageInfo::SetFinalized() {
   for (int level = 1; level < base_level(); level++) {
     assert(NumLevelBytes(level) == 0);
   }
-  uint64_t max_bytes_prev_level = 0;
-  for (int level = base_level(); level < num_levels() - 1; level++) {
-    if (LevelFiles(level).size() == 0) {
-      continue;
-    }
-    assert(MaxBytesForLevel(level) >= max_bytes_prev_level);
-    max_bytes_prev_level = MaxBytesForLevel(level);
-  }
+ //uint64_t max_bytes_prev_level = 0;
+ //for (int level = base_level(); level < num_levels() - 1; level++) {
+ //  if (LevelFiles(level).size() == 0) {
+ //    continue;
+ //  }
+ //  assert(MaxBytesForLevel(level) >= max_bytes_prev_level);
+ //  max_bytes_prev_level = MaxBytesForLevel(level);
+ //}
   int num_empty_non_l0_level = 0;
   for (int level = 0; level < num_levels(); level++) {
     assert(LevelFiles(level).size() == 0 ||
@@ -2477,20 +2477,61 @@ void VersionStorageInfo::CalculateBaseBytes(const ImmutableCFOptions& ioptions,
   set_l0_delay_trigger_count(num_l0_count);
 
   level_max_bytes_.resize(ioptions.num_levels);
+
+  //TODO(myabandeh): read it from options
+  size_t num_llevels = ioptions.num_levels;
+  // currently the levels will be cut off after num_levels. we should later adjust num_levels based on ioptions.num_llevels
+  llevel_max_runs_.resize(num_llevels+1); // there is no logical l0
+  llevel_fanout_.resize(num_llevels+1);
+
   if (!ioptions.level_compaction_dynamic_level_bytes) {
     base_level_ = (ioptions.compaction_style == kCompactionStyleLevel) ? 1 : -1;
+    //TODO(myabandeh): fill it up from options
+    size_t default_mr = 2;
+    for (size_t i = 1; i <= num_llevels; ++i) {
+      llevel_max_runs_[i] = default_mr;
+      llevel_fanout_[i] = options.max_bytes_for_level_multiplier;
+    }
+    // exceptions
+    // TODO(myabandeh): fill it up from options
+    llevel_max_runs_[1] = 3;
 
+    size_t r = 0;
+    size_t ll = 0;
+    size_t last_nonempty_size = 0;
     // Calculate for static bytes base case
-    for (int i = 0; i < ioptions.num_levels; ++i) {
+    for (int i = 0; i < ioptions.num_levels; ++i, ++r) {
+      if (i == 1) {
+        r = 0;  // sorted runs start with level 1
+        ll = 1;
+      }
+      bool reserved = false;
+      // 2x to reserve space for lazy compaction
+      if (ll != 0) {
+        if (r == 2 * llevel_max_runs_[ll]) {
+          r = 0;
+          ll++;
+        }
+        if (r >= llevel_max_runs_[ll]) {
+          reserved = true;
+        }
+      }
       if (i == 0 && ioptions.compaction_style == kCompactionStyleUniversal) {
         level_max_bytes_[i] = options.max_bytes_for_level_base;
       } else if (i > 1) {
-        level_max_bytes_[i] = MultiplyCheckOverflow(
-            MultiplyCheckOverflow(level_max_bytes_[i - 1],
-                                  options.max_bytes_for_level_multiplier),
-            options.MaxBytesMultiplerAdditional(i - 1));
+        if (reserved) {
+          level_max_bytes_[i] = 1;
+        } else {
+          level_max_bytes_[i] = MultiplyCheckOverflow(
+              MultiplyCheckOverflow(
+                  last_nonempty_size,
+                  r != 0 ? 1 : options.max_bytes_for_level_multiplier),
+              options.MaxBytesMultiplerAdditional(i - 1));
+          last_nonempty_size = level_max_bytes_[i];
+        }
       } else {
         level_max_bytes_[i] = options.max_bytes_for_level_base;
+        last_nonempty_size = level_max_bytes_[i];
       }
     }
   } else {
@@ -2576,6 +2617,12 @@ void VersionStorageInfo::CalculateBaseBytes(const ImmutableCFOptions& ioptions,
         level_max_bytes_[i] = std::max(level_size, base_bytes_max);
       }
     }
+  }
+
+  ROCKS_LOG_WARN(ioptions.info_log, "Target LSM Shape:");
+  for (int l = 0; l < num_levels_; l++) {
+    ROCKS_LOG_WARN(ioptions.info_log, "L%d: %lu", l,
+                   MaxBytesForLevel(l));
   }
 }
 
