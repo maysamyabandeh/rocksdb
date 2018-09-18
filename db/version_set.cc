@@ -2506,14 +2506,18 @@ void VersionStorageInfo::CalculateBaseBytes(const ImmutableCFOptions& ioptions,
         ll = 1;
       }
       bool reserved = false;
+      bool new_ll = false;
       // 2x to reserve space for lazy compaction
       if (ll != 0) {
         if (r == 2 * llevel_max_runs_[ll]) {
           r = 0;
           ll++;
         }
-        if (r >= llevel_max_runs_[ll]) {
+        if (r < llevel_max_runs_[ll]) {
           reserved = true;
+        }
+        if (ll > 1 && r == llevel_max_runs_[ll]) {
+          new_ll = true;
         }
       }
       if (i == 0 && ioptions.compaction_style == kCompactionStyleUniversal) {
@@ -2522,16 +2526,22 @@ void VersionStorageInfo::CalculateBaseBytes(const ImmutableCFOptions& ioptions,
         if (reserved) {
           level_max_bytes_[i] = 1;
         } else {
-          level_max_bytes_[i] = MultiplyCheckOverflow(
-              MultiplyCheckOverflow(
-                  last_nonempty_size,
-                  r != 0 ? 1 : options.max_bytes_for_level_multiplier),
-              options.MaxBytesMultiplerAdditional(i - 1));
+          level_max_bytes_[i] =
+              !new_ll ? last_nonempty_size
+                      : MultiplyCheckOverflow(
+                            MultiplyCheckOverflow(
+                                last_nonempty_size,
+                                options.max_bytes_for_level_multiplier),
+                            options.MaxBytesMultiplerAdditional(i - 1));
           last_nonempty_size = level_max_bytes_[i];
         }
       } else {
-        level_max_bytes_[i] = options.max_bytes_for_level_base;
-        last_nonempty_size = level_max_bytes_[i];
+        if (reserved) {
+          level_max_bytes_[i] = 1;
+        } else {
+          level_max_bytes_[i] = options.max_bytes_for_level_base;
+          last_nonempty_size = level_max_bytes_[i];
+        }
       }
     }
   } else {
