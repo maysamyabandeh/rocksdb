@@ -1571,7 +1571,43 @@ uint32_t GetExpiredTtlFilesCount(const ImmutableCFOptions& ioptions,
 void VersionStorageInfo::ComputeCompactionScore(
     const ImmutableCFOptions& immutable_cf_options,
     const MutableCFOptions& mutable_cf_options) {
+  size_t num_llevels = immutable_cf_options.num_levels;
+  compaction_l_score_.resize(num_llevels+1);
+  compaction_l_level_.resize(num_llevels+1);
+  for (size_t i = 1; i <= num_llevels; ++i) {
+    compaction_l_score_[i] = 0; //default
+    compaction_l_level_[i] = i;
+  }
+  int ll = 0;
+  size_t r = 0;
   for (int level = 0; level <= MaxInputLevel(); level++) {
+    bool assigned = false;
+    if (level != 0) {
+      r++;
+    if (level == 1) {
+      ll = 1;
+      r = 0;
+    } else if (r == 2 * llevel_max_runs_[ll] || (r == llevel_max_runs_[ll] && llevel_max_runs_[ll] == 1)) {
+      ll ++;
+      r = 0;
+    }
+    //printf("DBG level: %d ll: %d r:%zu max: %zu\n", level, ll, r, llevel_max_runs_[ll] * 2);
+    if (llevel_max_runs_[ll] > 1) { // tiered
+      bool empty = true;
+      for (auto* f : files_[level]) {
+        if (!f->being_compacted) {
+          empty = false;
+          break;
+        }
+      }
+      if (!empty) {
+        //ROCKS_LOG_WARN(immutable_cf_options.info_log, "l%zu: %f + %f", level, compaction_l_score_[ll], 1.0 / llevel_max_runs_[ll]);
+        compaction_l_score_[ll] += 1.0 / llevel_max_runs_[ll];
+      }
+      assigned = true;
+    }
+    //else use the existig size / max size scoring scheme implemented below
+    }
     double score;
     if (level == 0) {
       // We treat level-0 specially by bounding the number of files
@@ -1645,6 +1681,9 @@ void VersionStorageInfo::ComputeCompactionScore(
     }
     compaction_level_[level] = level;
     compaction_score_[level] = score;
+    if (!assigned) {
+      compaction_l_score_[ll] = score;
+    }
   }
 
   // sort all the levels based on their score. Higher scores get listed
@@ -1661,6 +1700,30 @@ void VersionStorageInfo::ComputeCompactionScore(
       }
     }
   }
+  for (size_t i = 1; i < num_llevels; i++) {
+    if (compaction_l_score_[i] > 1) {
+      compaction_l_score_[i] += 1.0 / i; // prio upper levels
+    }
+  }
+  for (size_t i = 0; i < num_llevels - 2; i++) {
+    for (size_t j = i + 1; j < num_llevels - 1; j++) {
+      if (compaction_l_score_[i] < compaction_l_score_[j]) {
+        double score = compaction_l_score_[i];
+        int level = compaction_l_level_[i];
+        compaction_l_score_[i] = compaction_l_score_[j];
+        compaction_l_level_[i] = compaction_l_level_[j];
+        compaction_l_score_[j] = score;
+        compaction_l_level_[j] = level;
+      }
+    }
+  }
+  ROCKS_LOG_WARN(immutable_cf_options.info_log, "SCORE:");
+  for (size_t i = 0; i < num_llevels; i++) {
+    if (compaction_l_score_[i] == 0) break;
+    ROCKS_LOG_WARN(immutable_cf_options.info_log, "l%zu: %f", i,
+                   compaction_l_score_[i]);
+  }
+
   ComputeFilesMarkedForCompaction();
   ComputeBottommostFilesMarkedForCompaction();
   if (mutable_cf_options.ttl > 0) {
@@ -2495,6 +2558,8 @@ void VersionStorageInfo::CalculateBaseBytes(const ImmutableCFOptions& ioptions,
     // exceptions
     // TODO(myabandeh): fill it up from options
     llevel_max_runs_[1] = 3;
+    llevel_max_runs_[4] = 1;
+    llevel_max_runs_[5] = 1;
 
     size_t r = 0;
     size_t ll = 0;
@@ -2509,14 +2574,14 @@ void VersionStorageInfo::CalculateBaseBytes(const ImmutableCFOptions& ioptions,
       bool new_ll = false;
       // 2x to reserve space for lazy compaction
       if (ll != 0) {
-        if (r == 2 * llevel_max_runs_[ll]) {
+        if (r == 2 * llevel_max_runs_[ll] || (r == llevel_max_runs_[ll] && llevel_max_runs_[ll] == 1)) {
           r = 0;
           ll++;
         }
-        if (r < llevel_max_runs_[ll]) {
+        if (r < llevel_max_runs_[ll]&& llevel_max_runs_[ll] != 1) {
           reserved = true;
         }
-        if (ll > 1 && r == llevel_max_runs_[ll]) {
+        if (ll > 1 && (r == llevel_max_runs_[ll] || llevel_max_runs_[ll] == 1)) {
           new_ll = true;
         }
       }
