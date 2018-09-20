@@ -214,6 +214,8 @@ bool Compaction::InputCompressionMatchesOutput() const {
 }
 
 bool Compaction::IsTrivialMove() const {
+  // TODO(myabandeh): hack to avoid the complexity of not knowing when is_trivial_move_ is effective
+  return is_trivial_move_;
   // Avoid a move if there is lots of overlapping grandparent data.
   // Otherwise, the move could create a parent file that will require
   // a very expensive merge later on.
@@ -308,8 +310,10 @@ bool Compaction::KeyNotExistsBeyondOutputLevel(
 
 // Mark (or clear) each file that is being compacted
 void Compaction::MarkFilesBeingCompacted(bool mark_as_compacted) {
+  ROCKS_LOG_INFO(immutable_cf_options_.info_log, "MAYSAM MARK %d", mark_as_compacted);
   for (size_t i = 0; i < num_input_levels(); i++) {
     for (size_t j = 0; j < inputs_[i].size(); j++) {
+     ROCKS_LOG_INFO(immutable_cf_options_.info_log, "i=%d j=%lu", inputs_[i].level, inputs_[i][j]->fd.packed_number_and_path_id);
       assert(mark_as_compacted ? !inputs_[i][j]->being_compacted
                                : inputs_[i][j]->being_compacted);
       inputs_[i][j]->being_compacted = mark_as_compacted;

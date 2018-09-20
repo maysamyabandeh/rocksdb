@@ -428,6 +428,7 @@ class VersionStorageInfo {
 
   // List of files per level, files in each level are arranged
   // in increasing order of keys
+ public:
   std::vector<FileMetaData*>* files_;
 
   // Level that L0 data should be compacted to. All levels < base_level_ should
@@ -490,8 +491,11 @@ class VersionStorageInfo {
   // These are used to pick the best compaction level
   std::vector<double> compaction_score_;
   std::vector<int> compaction_level_;
+ public:
   std::vector<double> compaction_l_score_;
   std::vector<int> compaction_l_level_;
+  std::vector<int> l_to_ll_;
+  std::vector<int> ll_to_l_;
   int l0_delay_trigger_count_ = 0;  // Count used to trigger slow down and stop
                                     // for number of L0 files.
 

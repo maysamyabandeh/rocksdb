@@ -1574,12 +1574,17 @@ void VersionStorageInfo::ComputeCompactionScore(
   size_t num_llevels = immutable_cf_options.num_levels;
   compaction_l_score_.resize(num_llevels+1);
   compaction_l_level_.resize(num_llevels+1);
+  l_to_ll_.resize(immutable_cf_options.num_levels);
+  ll_to_l_.resize(num_llevels+1);
+  ll_to_l_[0] = 0;
+  l_to_ll_[0] = 0;
   for (size_t i = 1; i <= num_llevels; ++i) {
     compaction_l_score_[i] = 0; //default
     compaction_l_level_[i] = i;
   }
   int ll = 0;
   size_t r = 0;
+  bool half_full = false;
   for (int level = 0; level <= MaxInputLevel(); level++) {
     bool assigned = false;
     if (level != 0) {
@@ -1587,22 +1592,35 @@ void VersionStorageInfo::ComputeCompactionScore(
     if (level == 1) {
       ll = 1;
       r = 0;
+      ll_to_l_[ll] = level;
     } else if (r == 2 * llevel_max_runs_[ll] || (r == llevel_max_runs_[ll] && llevel_max_runs_[ll] == 1)) {
       ll ++;
+      half_full = false;
       r = 0;
+      ll_to_l_[ll] = level;
     }
+    l_to_ll_[level] = ll;
     //printf("DBG level: %d ll: %d r:%zu max: %zu\n", level, ll, r, llevel_max_runs_[ll] * 2);
     if (llevel_max_runs_[ll] > 1) { // tiered
+      bool being_compacted = false;
       bool empty = true;
       for (auto* f : files_[level]) {
-        if (!f->being_compacted) {
-          empty = false;
+        empty = false;
+        if (f->being_compacted) {
+          being_compacted = true;
           break;
         }
       }
-      if (!empty) {
+      if (!empty && !being_compacted) {
         //ROCKS_LOG_WARN(immutable_cf_options.info_log, "l%zu: %f + %f", level, compaction_l_score_[ll], 1.0 / llevel_max_runs_[ll]);
         compaction_l_score_[ll] += 1.0 / llevel_max_runs_[ll];
+        half_full = true;
+      } else if (being_compacted) {
+        half_full = false; // reset
+      } else if (half_full) {
+        assert(empty);
+        // needs immediate trivial move
+        compaction_l_score_[ll] += 10 * ll;
       }
       assigned = true;
     }
@@ -1720,7 +1738,7 @@ void VersionStorageInfo::ComputeCompactionScore(
   ROCKS_LOG_WARN(immutable_cf_options.info_log, "SCORE:");
   for (size_t i = 0; i < num_llevels; i++) {
     if (compaction_l_score_[i] == 0) break;
-    ROCKS_LOG_WARN(immutable_cf_options.info_log, "l%zu: %f", i,
+    ROCKS_LOG_WARN(immutable_cf_options.info_log, "l%zu: %f", compaction_l_level_[i],
                    compaction_l_score_[i]);
   }
 

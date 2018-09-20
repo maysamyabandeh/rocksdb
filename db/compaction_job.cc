@@ -1398,9 +1398,13 @@ Status CompactionJob::InstallCompactionResults(
       compaction->edit()->AddFile(compaction->output_level(), out.meta);
     }
   }
-  return versions_->LogAndApply(compaction->column_family_data(),
+  auto ret = versions_->LogAndApply(compaction->column_family_data(),
                                 mutable_cf_options, compaction->edit(),
                                 db_mutex_, db_directory_);
+  ROCKS_LOG_INFO(
+      db_options_.info_log, "[%s] [JOB %d] installed",
+      compaction->column_family_data()->GetName().c_str(), job_id_);
+  return ret;
 }
 
 void CompactionJob::RecordCompactionIOStats() {
