@@ -416,6 +416,7 @@ class VersionStorageInfo {
                               // is guaranteed to be empty.
   // Per-level max bytes
   std::vector<uint64_t> level_max_bytes_;
+ public:
   std::vector<size_t> llevel_max_runs_;
   std::vector<size_t> llevel_fanout_;
 

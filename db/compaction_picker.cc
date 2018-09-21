@@ -1093,6 +1093,7 @@ class LevelCompactionBuilder {
   // Pick and return a compaction.
   Compaction* PickCompaction(LogBuffer* log_buffer);
   bool LevelIsEmpty(int level);
+  bool LevelIsReserved(int level);
 
   // Pick the initial files to compact to the next level. (or together
   // in Intra-L0 compactions)
@@ -1338,6 +1339,18 @@ bool LevelCompactionBuilder::LevelIsEmpty(int level) {
   return true;
 }
 
+bool LevelCompactionBuilder::LevelIsReserved(int level) {
+  if (vstorage_->files_[level].size() > 0) {
+    return false;
+  }
+  for (Compaction* c : *compaction_picker_->compactions_in_progress()) {
+    if (c->output_level() == level) {
+      return true;
+    }
+  }
+  return false;
+}
+
 Compaction* LevelCompactionBuilder::PickCompaction(LogBuffer* log_buffer) {
   (void)log_buffer;
   compaction_inputs_.clear();
@@ -1402,6 +1415,51 @@ Compaction* LevelCompactionBuilder::PickCompaction(LogBuffer* log_buffer) {
     Compaction* c = GetCompaction();
     c->set_is_trivial_move(true);
     return c;
+  }
+  }
+
+  // update the score based on ongoing compactions
+  {
+  bool updated = false;
+  for (int i = 0; i < compaction_picker_->NumberLevels() - 1; i++) {
+    auto start_llevel = vstorage_->compaction_l_level_[i];
+    auto score = vstorage_->compaction_l_score_[start_llevel];
+    if (score < 1) {  // the level is not ready for compaction
+      continue;
+    }
+    if (start_llevel == 0) {
+      continue;
+    }
+    if (LevelIsReserved(i)) {
+      float add = 1.0 / vstorage_->llevel_max_runs_[start_llevel];
+      ROCKS_LOG_INFO(ioptions_.info_log,
+                     "MAYSAM boosting L%d score from %f by %f", i,
+                     vstorage_->compaction_l_score_[start_llevel], add);
+      vstorage_->compaction_l_score_[start_llevel] += add;
+      ROCKS_LOG_INFO(ioptions_.info_log,
+                     "MAYSAM boosting L%d new score %f", i,
+                     vstorage_->compaction_l_score_[start_llevel]);
+      updated = true;
+    }
+  }
+
+  if (updated) {
+    // sort all the levels based on their score. Higher scores get listed
+    // first. Use bubble sort because the number of entries are small.
+    auto num_llevels = compaction_picker_->NumberLevels();
+    for (int i = 0; i < num_llevels - 2; i++) {
+      for (int j = i + 1; j < num_llevels - 1; j++) {
+        if (vstorage_->compaction_l_score_[i] <
+            vstorage_->compaction_l_score_[j]) {
+          double score = vstorage_->compaction_l_score_[i];
+          int level = vstorage_->compaction_l_level_[i];
+          vstorage_->compaction_l_score_[i] = vstorage_->compaction_l_score_[j];
+          vstorage_->compaction_l_level_[i] = vstorage_->compaction_l_level_[j];
+          vstorage_->compaction_l_score_[j] = score;
+          vstorage_->compaction_l_level_[j] = level;
+        }
+      }
+    }
   }
   }
 
