@@ -1574,31 +1574,21 @@ void VersionStorageInfo::ComputeCompactionScore(
   size_t num_llevels = immutable_cf_options.num_levels;
   compaction_l_score_.resize(num_llevels+1);
   compaction_l_level_.resize(num_llevels+1);
-  l_to_ll_.resize(immutable_cf_options.num_levels);
-  ll_to_l_.resize(num_llevels+1);
-  ll_to_l_[0] = 0;
-  l_to_ll_[0] = 0;
   for (size_t i = 1; i <= num_llevels; ++i) {
     compaction_l_score_[i] = 0; //default
     compaction_l_level_[i] = i;
   }
-  int ll = 0;
   size_t r = 0;
-  for (int level = 0; level <= MaxInputLevel(); level++) {
+  int last_ll = 0;
+  for (int level = 0; level <= MaxInputLevel(); level++, r++) {
     bool assigned = false;
-    if (level != 0) {
-      r++;
-    if (level == 1) {
-      ll = 1;
+    int ll = l_to_ll_[level];
+    assert(l_to_ll_[ll_to_l_[ll]] == ll);
+    if (last_ll != ll) {
       r = 0;
-      ll_to_l_[ll] = level;
-    } else if (r == 2 * llevel_max_runs_[ll] || (r == llevel_max_runs_[ll] && llevel_max_runs_[ll] == 1)) {
-      ll ++;
-      r = 0;
-      ll_to_l_[ll] = level;
     }
-    l_to_ll_[level] = ll;
-    //printf("DBG level: %d ll: %d r:%zu max: %zu\n", level, ll, r, llevel_max_runs_[ll] * 2);
+    last_ll = ll;
+    if (level != 0) {
     if (llevel_max_runs_[ll] > 1) { // tiered
       bool being_compacted = false;
       bool empty = true;
@@ -2555,6 +2545,10 @@ void VersionStorageInfo::CalculateBaseBytes(const ImmutableCFOptions& ioptions,
   // currently the levels will be cut off after num_levels. we should later adjust num_levels based on ioptions.num_llevels
   llevel_max_runs_.resize(num_llevels+1); // there is no logical l0
   llevel_fanout_.resize(num_llevels+1);
+  l_to_ll_.resize(ioptions.num_levels);
+  ll_to_l_.resize(num_llevels+1);
+  ll_to_l_[0] = 0;
+  l_to_ll_[0] = 0;
 
   if (!ioptions.level_compaction_dynamic_level_bytes) {
     base_level_ = (ioptions.compaction_style == kCompactionStyleLevel) ? 1 : -1;
@@ -2578,22 +2572,34 @@ void VersionStorageInfo::CalculateBaseBytes(const ImmutableCFOptions& ioptions,
       if (i == 1) {
         r = 0;  // sorted runs start with level 1
         ll = 1;
+        ll_to_l_[ll] = i;
       }
       bool reserved = false;
       bool new_ll = false;
       // 2x to reserve space for lazy compaction
       if (ll != 0) {
-        if (r == 2 * llevel_max_runs_[ll] || (r == llevel_max_runs_[ll] && llevel_max_runs_[ll] == 1)) {
+        size_t rpl = llevel_max_runs_[ll];
+        if (rpl != 1) { // tiered
+          if (ll == 1) {
+            rpl = 3 * rpl;
+          } else {
+            rpl = 2 * rpl;
+          }
+        }
+        bool cut_level = r == rpl;
+        if (cut_level) {
           r = 0;
           ll++;
+          ll_to_l_[ll] = i;
         }
-        if (r < llevel_max_runs_[ll]&& llevel_max_runs_[ll] != 1) {
+        if (rpl - r > llevel_max_runs_[ll] && llevel_max_runs_[ll] != 1) {
           reserved = true;
         }
-        if (ll > 1 && (r == llevel_max_runs_[ll] || llevel_max_runs_[ll] == 1)) {
-          new_ll = true;
+        if (rpl - r == llevel_max_runs_[ll] || llevel_max_runs_[ll] == 1) {
+          new_ll = ll != 0;
         }
       }
+      l_to_ll_[i] = ll;
       if (i == 0 && ioptions.compaction_style == kCompactionStyleUniversal) {
         level_max_bytes_[i] = options.max_bytes_for_level_base;
       } else if (i > 1) {
