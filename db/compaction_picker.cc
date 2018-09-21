@@ -1341,6 +1341,70 @@ bool LevelCompactionBuilder::LevelIsEmpty(int level) {
 Compaction* LevelCompactionBuilder::PickCompaction(LogBuffer* log_buffer) {
   (void)log_buffer;
   compaction_inputs_.clear();
+    // Check for trivial moves
+  {
+  int next_level = 0;
+  for (int l = 1; l <= vstorage_->MaxInputLevel(); l = next_level) {
+    auto start_level = l;
+    auto start_llevel = vstorage_->l_to_ll_[start_level];
+    next_level = vstorage_->ll_to_l_[start_llevel + 1];
+    if (next_level == 0) {  // no next logical level
+      next_level = vstorage_->MaxInputLevel() + 1;
+    }
+    output_level_ = 0;
+    for (int level = next_level - 1; level >= start_level; level--) {
+      bool being_compacted = false;
+      bool empty = true;
+      for (auto* f : vstorage_->files_[level]) {
+        empty = false;
+        if (f->being_compacted) {
+          being_compacted = true;
+          break;
+        }
+      }
+      bool reserved = false;
+      for (Compaction* c : *compaction_picker_->compactions_in_progress()) {
+        if (c->output_level() == level) {
+          reserved = true;
+          break;
+        }
+      }
+      ROCKS_LOG_INFO(
+          ioptions_.info_log,
+          "MAYSAM trivial verify %d: empty=%d being_compacted=%d reserved=%d",
+          level, empty, being_compacted, reserved);
+      if (empty && !reserved) {
+        ROCKS_LOG_INFO(ioptions_.info_log, "1 %d", output_level_);
+        if (output_level_ == 0) {
+          ROCKS_LOG_INFO(ioptions_.info_log, "2");
+          output_level_ = level;
+        }
+      } else if (being_compacted || reserved) {
+        ROCKS_LOG_INFO(ioptions_.info_log, "3");
+        // reset
+        output_level_ = 0;
+      } else if (output_level_ != 0) {
+        ROCKS_LOG_INFO(ioptions_.info_log, "4");
+        // trivial move from level to output_level_
+        ROCKS_LOG_INFO(ioptions_.info_log, "MAYSAM trivial move from %d to %d",
+                       level, output_level_);
+        CompactionInputFiles level_inputs;
+        level_inputs.level = level;
+        level_inputs.files = vstorage_->files_[level];
+        compaction_inputs_.push_back(level_inputs);
+        break;
+      }
+    }
+    if (compaction_inputs_.empty()) {
+      continue;
+    }
+    assert(output_level_);
+    Compaction* c = GetCompaction();
+    c->set_is_trivial_move(true);
+    return c;
+  }
+  }
+
   for (int i = 0; i < compaction_picker_->NumberLevels() - 1; i++) {
     start_level_score_ = vstorage_->compaction_l_score_[i];
     if (start_level_score_ <= 1) {
@@ -1350,98 +1414,7 @@ Compaction* LevelCompactionBuilder::PickCompaction(LogBuffer* log_buffer) {
     auto start_llevel = vstorage_->compaction_l_level_[i];
     auto start_level = vstorage_->ll_to_l_[start_llevel];
     auto next_level = vstorage_->ll_to_l_[start_llevel+1];
-    // Check for trivial moves
-    {
-      bool half_full = false;
-      bool trivial_move = false;
-      for (int level = start_level; level < next_level; level++) {
-        bool being_compacted = false;
-        bool empty = true;
-        for (auto* f : vstorage_->files_[level]) {
-          empty = false;
-          if (f->being_compacted) {
-            being_compacted = true;
-            break;
-          }
-        }
-        bool reserved = false;
-        for (Compaction* c : *compaction_picker_->compactions_in_progress()) {
-          if (c->output_level() == level) {
-            reserved = true;
-            break;
-          }
-        }
-        if (!empty) {
-          if (!being_compacted) {
-            half_full = true;
-            ROCKS_LOG_INFO(ioptions_.info_log,
-                           "MAYSAM trivial candidate from %d", level);
-          } else {
-            half_full = false; //reset
-          }
-        } else if (reserved) {
-          // reset
-          half_full = false;
-        } else if (half_full) {
-          trivial_move = true;
-          ROCKS_LOG_INFO(ioptions_.info_log, "MAYSAM trivial candidate to %d",
-                         level);
-          break;
-        }
-      }
-      if (trivial_move) {
-        output_level_ = 0;
-        for (int level = next_level -1; level >= start_level; level--) {
-          bool being_compacted = false;
-          bool empty = true;
-          for (auto* f : vstorage_->files_[level]) {
-            empty = false;
-            if (f->being_compacted) {
-              being_compacted = true;
-              break;
-            }
-          }
-          bool reserved = false;
-          // TODO(myabandeh): How about when we scoring the compactions
-          for (Compaction* c : *compaction_picker_->compactions_in_progress()) {
-            if (c->output_level() == level) {
-              reserved = true;
-              break;
-            }
-          }
-          ROCKS_LOG_INFO(
-              ioptions_.info_log,
-              "MAYSAM trivial verify %d: empty=%d being_compacted=%d", level,
-              empty, being_compacted);
-          if (empty) {
-            ROCKS_LOG_INFO(ioptions_.info_log, "1 %d", output_level_);
-            if (output_level_ == 0) {
-              ROCKS_LOG_INFO(ioptions_.info_log, "2");
-              output_level_ = level;
-            }
-          } else if (being_compacted || reserved) {
-              ROCKS_LOG_INFO(ioptions_.info_log, "3");
-            // reset
-            output_level_ = 0;
-          } else if (output_level_ != 0) {
-              ROCKS_LOG_INFO(ioptions_.info_log, "4");
-            // trivial move from level to output_level_
-            ROCKS_LOG_INFO(ioptions_.info_log,
-                           "MAYSAM trivial move from %d to %d", level,
-                           output_level_);
-            CompactionInputFiles level_inputs;
-            level_inputs.level = level;
-            level_inputs.files = vstorage_->files_[level];
-            compaction_inputs_.push_back(level_inputs);
-            break;
-          }
-        }
-        assert(output_level_);
-        Compaction* c = GetCompaction();
-        c->set_is_trivial_move(true);
-        return c;
-      }
-    }
+    assert(next_level);
 
     ROCKS_LOG_INFO(ioptions_.info_log, "MAYSAM i=%d start_llevel=%d start_level=%d next_level=%d", i, start_llevel, start_level, next_level);
     if (!LevelIsEmpty(next_level)) {

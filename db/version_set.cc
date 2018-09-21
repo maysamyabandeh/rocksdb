@@ -1584,7 +1584,6 @@ void VersionStorageInfo::ComputeCompactionScore(
   }
   int ll = 0;
   size_t r = 0;
-  bool half_full = false;
   for (int level = 0; level <= MaxInputLevel(); level++) {
     bool assigned = false;
     if (level != 0) {
@@ -1595,7 +1594,6 @@ void VersionStorageInfo::ComputeCompactionScore(
       ll_to_l_[ll] = level;
     } else if (r == 2 * llevel_max_runs_[ll] || (r == llevel_max_runs_[ll] && llevel_max_runs_[ll] == 1)) {
       ll ++;
-      half_full = false;
       r = 0;
       ll_to_l_[ll] = level;
     }
@@ -1614,13 +1612,6 @@ void VersionStorageInfo::ComputeCompactionScore(
       if (!empty && !being_compacted) {
         //ROCKS_LOG_WARN(immutable_cf_options.info_log, "l%zu: %f + %f", level, compaction_l_score_[ll], 1.0 / llevel_max_runs_[ll]);
         compaction_l_score_[ll] += 1.0 / llevel_max_runs_[ll];
-        half_full = true;
-      } else if (being_compacted) {
-        half_full = false; // reset
-      } else if (half_full) {
-        assert(empty);
-        // needs immediate trivial move
-        compaction_l_score_[ll] += 10 * ll;
       }
       assigned = true;
     }
