@@ -137,6 +137,10 @@ CompactionPicker::~CompactionPicker() {}
 // Delete this compaction from the list of running compactions.
 void CompactionPicker::ReleaseCompactionFiles(Compaction* c, Status status) {
   UnregisterCompaction(c);
+ //bool retargeted = false;
+ //do {
+ //  retargeted = RetargetConcurrentCompactions(c); 
+ //} while (retargeted);
   if (!status.ok()) {
     c->ResetNextCompactionIndex();
   }
@@ -982,6 +986,51 @@ void CompactionPicker::UnregisterCompaction(Compaction* c) {
   compactions_in_progress_.erase(c);
 }
 
+/*
+bool CompactionPicker::LevelIsEmpty(VersionStorageInfo* vstorage, int level) {
+  if (vstorage->files_[level].size() > 0) {
+    return false;
+  }
+  for (Compaction* c : *compactions_in_progress()) {
+    if (c->output_level() == level) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool CompactionPicker::RetargetConcurrentCompactions(Compaction* c) {
+  assert(c);
+  auto c_ll = c->input_version()->l_to_ll_[c->output_level()];
+  if (c_ll <= 1) continue;
+  int new_output = 0;
+  for (Compaction* o : *compaction_picker_->compactions_in_progress()) {
+    if (o->final_level() >= 0) continue;
+    auto o_ll = c->input_version()->l_to_ll_[o->output_level()];
+    if (c_ll != o_ll + 1) {
+      continue;
+    }
+    auto start_l = c->input_version()->ll_to_l_[c_ll - 1];
+    auto end_l = c->input_version()->ll_to_l_[c_ll];
+    assert(start_l <= o->output_level());
+    assert(o->output_level() < end_l);
+    int new_output = 0;
+    for (auto l = o->output_level() + 1; l < end_l; l++) {
+      if (!LevelIsEmpty(o->input_version())) {
+        break;
+      }
+      new_output = l;
+    }
+    if (new_output != 0) {
+      c->set_final_level(new_output);
+      break;
+    }
+  }
+  bool retargeted = new_output != 0;
+  return retargeted;
+}
+*/
+
 void CompactionPicker::PickFilesMarkedForCompaction(
     const std::string& cf_name, VersionStorageInfo* vstorage, int* start_level,
     int* output_level, CompactionInputFiles* start_level_inputs) {
@@ -1473,22 +1522,40 @@ Compaction* LevelCompactionBuilder::PickCompaction(LogBuffer* log_buffer) {
     auto start_level = vstorage_->ll_to_l_[start_llevel];
     auto next_level = vstorage_->ll_to_l_[start_llevel+1];
     assert(next_level);
+    output_level_ = next_level;
 
     ROCKS_LOG_INFO(ioptions_.info_log, "MAYSAM i=%d start_llevel=%d start_level=%d next_level=%d", i, start_llevel, start_level, next_level);
-    if (!LevelIsEmpty(next_level)) {
-      ROCKS_LOG_INFO(ioptions_.info_log, "MAYSAM Skip compaction next level %d has %zu files", next_level, vstorage_->files_[next_level].size());
-      continue;
+    if (!LevelIsEmpty(output_level_)) {
+      for (int nl = next_level + 1; nl < ioptions_.num_levels; nl++) {
+        if (vstorage_->l_to_ll_[nl] != (start_llevel + 1)) {
+          break;
+        }
+        if (LevelIsEmpty(nl)) {
+          ROCKS_LOG_INFO(
+              ioptions_.info_log,
+              "MAYSAM Incorrect Hack: change output level from %d to %d",
+              output_level_, nl);
+          output_level_ = nl;
+          break;
+        }
+      }
+      if (!LevelIsEmpty(output_level_)) {
+        ROCKS_LOG_INFO(ioptions_.info_log,
+                       "MAYSAM Skip compaction next level %d has %zu files",
+                       output_level_, vstorage_->files_[output_level_].size());
+        continue;
+      }
     }
-    ROCKS_LOG_INFO(ioptions_.info_log, "next level from ? to %d", next_level);
-    for (int nl = next_level + 1; nl < ioptions_.num_levels; nl++) {
+    ROCKS_LOG_INFO(ioptions_.info_log, "next level from ? to %d", output_level_);
+    for (int nl = output_level_ + 1; nl < ioptions_.num_levels; nl++) {
       if (vstorage_->l_to_ll_[nl] != (start_llevel + 1)) {
         break;
       }
       if (!LevelIsEmpty(nl)) {
         break;
       }
-      ROCKS_LOG_INFO(ioptions_.info_log, "next level from %d to %d", next_level, nl);
-      next_level = nl;
+      ROCKS_LOG_INFO(ioptions_.info_log, "next level from %d to %d", output_level_, nl);
+      output_level_ = nl;
     }
     for (int level = start_level; level < next_level; level++) {
       CompactionInputFiles level_inputs;
@@ -1523,8 +1590,7 @@ Compaction* LevelCompactionBuilder::PickCompaction(LogBuffer* log_buffer) {
        ROCKS_LOG_INFO(ioptions_.info_log, "MAYSAM skip compaction score %f level %d due to empty input", start_level_score_, start_llevel);
        continue;
     }
-    output_level_ = next_level;
-      ROCKS_LOG_INFO(ioptions_.info_log, "MAYSAM compaction score: %f to %d", start_level_score_, next_level);
+    ROCKS_LOG_INFO(ioptions_.info_log, "MAYSAM compaction score: %f to %d", start_level_score_, output_level_);
 
     break;
   }

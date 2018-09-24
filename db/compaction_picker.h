@@ -189,6 +189,8 @@ class CompactionPicker {
 
   // Remove this compaction from the set of running compactions
   void UnregisterCompaction(Compaction* c);
+ //bool RetargetConcurrentCompactions(Compaction* c);
+ //bool LevelIsEmpty(VersionStorageInfo* vstorage, int level);
 
   std::set<Compaction*>* level0_compactions_in_progress() {
     return &level0_compactions_in_progress_;
