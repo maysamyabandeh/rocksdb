@@ -2561,8 +2561,8 @@ void VersionStorageInfo::CalculateBaseBytes(const ImmutableCFOptions& ioptions,
     // exceptions
     // TODO(myabandeh): fill it up from options
     llevel_max_runs_[1] = 3;
-    llevel_max_runs_[4] = 1;
     llevel_max_runs_[5] = 1;
+    llevel_max_runs_[6] = 1;
 
     size_t r = 0;
     size_t ll = 0;
@@ -2581,9 +2581,9 @@ void VersionStorageInfo::CalculateBaseBytes(const ImmutableCFOptions& ioptions,
         size_t rpl = llevel_max_runs_[ll];
         if (rpl != 1) { // tiered
           if (ll == 1) {
-            rpl = 3 * rpl;
+            rpl = 4 * rpl;
           } else {
-            rpl = 2 * rpl;
+            rpl = 3 * rpl;
           }
         }
         bool cut_level = r == rpl;
@@ -2596,7 +2596,7 @@ void VersionStorageInfo::CalculateBaseBytes(const ImmutableCFOptions& ioptions,
           reserved = true;
         }
         if (rpl - r == llevel_max_runs_[ll] || llevel_max_runs_[ll] == 1) {
-          new_ll = ll != 0;
+          new_ll = ll > 1;
         }
       }
       l_to_ll_[i] = ll;

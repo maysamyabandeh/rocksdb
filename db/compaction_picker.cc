@@ -1471,24 +1471,39 @@ Compaction* LevelCompactionBuilder::PickCompaction(LogBuffer* log_buffer) {
   {
   bool updated = false;
   for (int i = 0; i < compaction_picker_->NumberLevels() - 1; i++) {
-    auto start_llevel = vstorage_->compaction_l_level_[i];
-    auto score = vstorage_->compaction_l_score_[start_llevel];
+    auto ll = vstorage_->compaction_l_level_[i];
+    if (ll == 0) {
+      ROCKS_LOG_INFO(ioptions_.info_log,
+                     "MAYSAM skip boost L%d it is L0", i);
+      continue;
+    }
+    auto score = vstorage_->compaction_l_score_[i];
     if (score < 1) {  // the level is not ready for compaction
+      ROCKS_LOG_INFO(ioptions_.info_log,
+                     "MAYSAM skip boost LL%d score %f", i, score);
       continue;
     }
-    if (start_llevel == 0) {
+    if (vstorage_->llevel_max_runs_[ll] <= 1) {
+      ROCKS_LOG_INFO(ioptions_.info_log,
+                     "MAYSAM skip boost LL%d not tiered", i, score);
       continue;
     }
-    if (LevelIsReserved(i)) {
-      float add = 1.0 / vstorage_->llevel_max_runs_[start_llevel];
-      ROCKS_LOG_INFO(ioptions_.info_log,
-                     "MAYSAM boosting L%d score from %f by %f", i,
-                     vstorage_->compaction_l_score_[start_llevel], add);
-      vstorage_->compaction_l_score_[start_llevel] += add;
-      ROCKS_LOG_INFO(ioptions_.info_log,
-                     "MAYSAM boosting L%d new score %f", i,
-                     vstorage_->compaction_l_score_[start_llevel]);
-      updated = true;
+    auto start_level = vstorage_->ll_to_l_[ll];
+    auto next_level = vstorage_->ll_to_l_[ll+1];
+    for (auto l = start_level; l < next_level; l++) {
+      if (LevelIsReserved(l)) {
+        float add = 1.0 / vstorage_->llevel_max_runs_[ll];
+        ROCKS_LOG_INFO(ioptions_.info_log,
+                       "MAYSAM boosting L%d score from %f by %f", l,
+                       score, add);
+        vstorage_->compaction_l_score_[i] += add;
+        ROCKS_LOG_INFO(ioptions_.info_log, "MAYSAM boosting L%d new score %f",
+                       l, vstorage_->compaction_l_score_[i]);
+        updated = true;
+      } else {
+        ROCKS_LOG_INFO(ioptions_.info_log, "MAYSAM skip boost L%d not reserved",
+                       l);
+      }
     }
   }
 
