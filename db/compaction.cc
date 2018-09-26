@@ -310,7 +310,8 @@ bool Compaction::KeyNotExistsBeyondOutputLevel(
 
 // Mark (or clear) each file that is being compacted
 void Compaction::MarkFilesBeingCompacted(bool mark_as_compacted) {
-  ROCKS_LOG_INFO(immutable_cf_options_.info_log, "MAYSAM MARK %d", mark_as_compacted);
+  //TODO(myabandeh): remove the log line
+  ROCKS_LOG_INFO(immutable_cf_options_.info_log, "MARK %d", mark_as_compacted);
   for (size_t i = 0; i < num_input_levels(); i++) {
     for (size_t j = 0; j < inputs_[i].size(); j++) {
      ROCKS_LOG_INFO(immutable_cf_options_.info_log, "i=%d j=%lu", inputs_[i].level, inputs_[i][j]->fd.packed_number_and_path_id);

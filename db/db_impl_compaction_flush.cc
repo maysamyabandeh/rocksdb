@@ -1492,7 +1492,6 @@ Status DBImpl::BackgroundFlush(bool* made_progress, JobContext* job_context,
 
 void DBImpl::BackgroundCallFlush() {
   bool made_progress = false;
-  ROCKS_LOG_ERROR(immutable_db_options_.info_log, "MAYSAM BackgroundCallFlush");
   JobContext job_context(next_job_id_.fetch_add(1), true);
 
   TEST_SYNC_POINT("DBImpl::BackgroundCallFlush:start");
@@ -1501,7 +1500,6 @@ void DBImpl::BackgroundCallFlush() {
                        immutable_db_options_.info_log.get());
   {
     InstrumentedMutexLock l(&mutex_);
-  ROCKS_LOG_ERROR(immutable_db_options_.info_log, "MAYSAM mutex");
     assert(bg_flush_scheduled_);
     num_running_flushes_++;
 
@@ -1982,7 +1980,6 @@ Status DBImpl::BackgroundCompaction(bool* made_progress,
     TEST_SYNC_POINT("DBImpl::BackgroundCompaction:NonTrivial:AfterRun");
     mutex_.Lock();
 
-    ROCKS_LOG_WARN(immutable_db_options_.info_log, "MAYSAM INSTALL");
     status = compaction_job.Install(*c->mutable_cf_options());
     if (status.ok()) {
       InstallSuperVersionAndScheduleWork(
@@ -1992,7 +1989,6 @@ Status DBImpl::BackgroundCompaction(bool* made_progress,
     *made_progress = true;
   }
   if (c != nullptr) {
-    ROCKS_LOG_WARN(immutable_db_options_.info_log, "MAYSAM RELEASE");
     c->ReleaseCompactionFiles(status);
     *made_progress = true;
 

@@ -2697,10 +2697,13 @@ void VersionStorageInfo::CalculateBaseBytes(const ImmutableCFOptions& ioptions,
     }
   }
 
-  ROCKS_LOG_WARN(ioptions.info_log, "Target LSM Shape:");
-  for (int l = 0; l < num_levels_; l++) {
-    ROCKS_LOG_WARN(ioptions.info_log, "L%d: %lu", l,
-                   MaxBytesForLevel(l));
+  static int printed = 0;
+  if (printed < 3) {
+    ROCKS_LOG_WARN(ioptions.info_log, "Target LSM Shape:");
+    for (int l = 0; l < num_levels_; l++) {
+      ROCKS_LOG_WARN(ioptions.info_log, "L%d: %lu", l, MaxBytesForLevel(l));
+    }
+    printed ++;
   }
 }
 
