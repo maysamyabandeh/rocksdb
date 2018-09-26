@@ -2561,9 +2561,10 @@ void VersionStorageInfo::CalculateBaseBytes(const ImmutableCFOptions& ioptions,
     // exceptions
     // TODO(myabandeh): fill it up from options
     llevel_max_runs_[1] = 3;
-    llevel_max_runs_[4] = 1;
-    llevel_max_runs_[5] = 1;
-    llevel_max_runs_[6] = 1;
+    // leveled layers
+    for (size_t i = 3; i <= num_llevels; ++i) {
+      llevel_max_runs_[i] = 1;
+    }
 
     size_t r = 0;
     size_t ll = 0;

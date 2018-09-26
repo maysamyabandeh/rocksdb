@@ -1409,6 +1409,11 @@ bool LevelCompactionBuilder::CompactionInProgress(int level) {
       return true;
     }
   }
+  for (auto* f : vstorage_->files_[level]) {
+    if (f->being_compacted) {
+      return true;
+    }
+  }
   return false;
 }
 
