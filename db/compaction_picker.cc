@@ -972,6 +972,7 @@ void CompactionPicker::RegisterCompaction(Compaction* c) {
       ioptions_.compaction_style == kCompactionStyleUniversal) {
     level0_compactions_in_progress_.insert(c);
   }
+    ROCKS_LOG_INFO(ioptions_.info_log, "compactions_in_progress_.insert %d", c->output_level());
   compactions_in_progress_.insert(c);
 }
 
@@ -984,6 +985,7 @@ void CompactionPicker::UnregisterCompaction(Compaction* c) {
     level0_compactions_in_progress_.erase(c);
   }
   compactions_in_progress_.erase(c);
+    ROCKS_LOG_INFO(ioptions_.info_log, "compactions_in_progress_.erase %d", c->output_level());
 }
 
 /*
@@ -1143,6 +1145,7 @@ class LevelCompactionBuilder {
   Compaction* PickCompaction(LogBuffer* log_buffer);
   bool LevelIsEmpty(int level);
   bool LevelIsReserved(int level);
+  bool CompactionInProgress(int level);
 
   // Pick the initial files to compact to the next level. (or together
   // in Intra-L0 compactions)
@@ -1400,6 +1403,15 @@ bool LevelCompactionBuilder::LevelIsReserved(int level) {
   return false;
 }
 
+bool LevelCompactionBuilder::CompactionInProgress(int level) {
+  for (Compaction* c : *compaction_picker_->compactions_in_progress()) {
+    if (c->output_level() == level) {
+      return true;
+    }
+  }
+  return false;
+}
+
 Compaction* LevelCompactionBuilder::PickCompaction(LogBuffer* log_buffer) {
   (void)log_buffer;
   compaction_inputs_.clear();
@@ -1527,6 +1539,7 @@ Compaction* LevelCompactionBuilder::PickCompaction(LogBuffer* log_buffer) {
   }
   }
 
+  bool tiered = true;
   for (int i = 0; i < compaction_picker_->NumberLevels() - 1; i++) {
     start_level_score_ = vstorage_->compaction_l_score_[i];
     if (start_level_score_ <= 1) {
@@ -1538,8 +1551,10 @@ Compaction* LevelCompactionBuilder::PickCompaction(LogBuffer* log_buffer) {
     auto next_level = vstorage_->ll_to_l_[start_llevel+1];
     assert(next_level);
     output_level_ = next_level;
+    tiered = vstorage_->llevel_max_runs_[start_llevel+1] > 1;
 
-    ROCKS_LOG_INFO(ioptions_.info_log, "MAYSAM i=%d start_llevel=%d start_level=%d next_level=%d", i, start_llevel, start_level, next_level);
+    ROCKS_LOG_INFO(ioptions_.info_log, "MAYSAM i=%d tiered=%d start_llevel=%d start_level=%d next_level=%d output_level_=%d", i, tiered, start_llevel, start_level, next_level, output_level_);
+    if (tiered) {
     if (!LevelIsEmpty(output_level_)) {
       for (int nl = next_level + 1; nl < ioptions_.num_levels; nl++) {
         if (vstorage_->l_to_ll_[nl] != (start_llevel + 1)) {
@@ -1571,6 +1586,12 @@ Compaction* LevelCompactionBuilder::PickCompaction(LogBuffer* log_buffer) {
       }
       ROCKS_LOG_INFO(ioptions_.info_log, "next level from %d to %d", output_level_, nl);
       output_level_ = nl;
+    }
+    } else {// leveled
+      if (CompactionInProgress(output_level_)) {
+        ROCKS_LOG_INFO(ioptions_.info_log, "Skip leveled to L%d: compaction in progress", output_level_);
+        continue;
+      }
     }
     for (int level = start_level; level < next_level; level++) {
       CompactionInputFiles level_inputs;
@@ -1605,6 +1626,13 @@ Compaction* LevelCompactionBuilder::PickCompaction(LogBuffer* log_buffer) {
        ROCKS_LOG_INFO(ioptions_.info_log, "MAYSAM skip compaction score %f level %d due to empty input", start_level_score_, start_llevel);
        continue;
     }
+    if (!tiered && !LevelIsEmpty(output_level_)) { // include output in input
+      CompactionInputFiles level_inputs;
+      level_inputs.level = output_level_;
+      level_inputs.files = vstorage_->files_[output_level_];
+      ROCKS_LOG_INFO(ioptions_.info_log, "MAYSAM compaction_inputs_ push_back: %zu files from level %d", level_inputs.files.size(), level_inputs.level);
+      compaction_inputs_.push_back(level_inputs);
+    }
     ROCKS_LOG_INFO(ioptions_.info_log, "MAYSAM compaction score: %f to %d", start_level_score_, output_level_);
 
     break;
@@ -1613,7 +1641,12 @@ Compaction* LevelCompactionBuilder::PickCompaction(LogBuffer* log_buffer) {
     return nullptr;
   }
   {
+  bool trivial_move = !tiered && compaction_inputs_.size() == 1;
   Compaction* c = GetCompaction();
+  if (trivial_move) {
+    c->set_is_trivial_move(true);
+    ROCKS_LOG_INFO(ioptions_.info_log, "MAYSAM mark trivial move to L%d", output_level_);
+  }
   return c;
   }
 
