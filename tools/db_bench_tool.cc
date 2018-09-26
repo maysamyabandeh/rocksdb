@@ -572,6 +572,16 @@ DEFINE_string(truth_db, "/dev/shm/truth_db/dbbench",
 
 DEFINE_int32(num_levels, 7, "The total number of levels");
 
+DEFINE_uint32(num_logical_levels, rocksdb::Options().num_logical_levels, "The total number of logical levels in adaptive lsm");
+
+static std::vector<size_t> FLAGS_rpl_v;
+DEFINE_string(rpl, "",
+              "A vector that specifies runs per level in adaptive lsm");
+
+static std::vector<size_t> FLAGS_rpl_multiplier_v;
+DEFINE_string(rpl_multiplier, "",
+              "A vector that specifies runs per level in adaptive lsm");
+
 DEFINE_int64(target_file_size_base, rocksdb::Options().target_file_size_base,
              "Target file size at level-1");
 
@@ -3139,6 +3149,7 @@ void VerifyDBFromDB(std::string& truth_db_name) {
     options.writable_file_max_buffer_size = FLAGS_writable_file_max_buffer_size;
     options.use_fsync = FLAGS_use_fsync;
     options.num_levels = FLAGS_num_levels;
+    options.num_logical_levels = FLAGS_num_logical_levels;
     options.target_file_size_base = FLAGS_target_file_size_base;
     options.target_file_size_multiplier = FLAGS_target_file_size_multiplier;
     options.max_bytes_for_level_base = FLAGS_max_bytes_for_level_base;
@@ -3335,6 +3346,20 @@ void VerifyDBFromDB(std::string& truth_db_name) {
       }
       options.max_bytes_for_level_multiplier_additional =
         FLAGS_max_bytes_for_level_multiplier_additional_v;
+    }
+    if (FLAGS_num_logical_levels > 0) { // adaptive lsm
+      if (FLAGS_num_logical_levels + 1 != FLAGS_rpl_v.size()) {
+        fprintf(stderr, "Insufficient number of rpl specified %zu\n",
+                FLAGS_rpl_v.size());
+        exit(1);
+      }
+      options.rpl = FLAGS_rpl_v;
+      if (FLAGS_num_logical_levels + 1!= FLAGS_rpl_multiplier_v.size()) {
+        fprintf(stderr, "Insufficient number of rpl_multiplier specified %zu\n",
+                FLAGS_rpl_multiplier_v.size());
+        exit(1);
+      }
+      options.rpl_multiplier = FLAGS_rpl_multiplier_v;
     }
     options.level0_stop_writes_trigger = FLAGS_level0_stop_writes_trigger;
     options.level0_file_num_compaction_trigger =
@@ -5679,6 +5704,28 @@ int db_bench_tool(int argc, char** argv) {
         std::stoi(fanout[j]));
 #else
         stoi(fanout[j]));
+#endif
+  }
+
+  std::vector<std::string> rpl = rocksdb::StringSplit(
+      FLAGS_rpl, ',');
+  for (size_t j = 0; j < rpl.size(); j++) {
+    FLAGS_rpl_v.push_back(
+#ifndef CYGWIN
+        std::stoi(rpl[j]));
+#else
+        stoi(rpl[j]));
+#endif
+  }
+
+  std::vector<std::string> rpl_multiplier = rocksdb::StringSplit(
+      FLAGS_rpl_multiplier, ',');
+  for (size_t j = 0; j < rpl_multiplier.size(); j++) {
+    FLAGS_rpl_multiplier_v.push_back(
+#ifndef CYGWIN
+        std::stoi(rpl_multiplier[j]));
+#else
+        stoi(rpl_multiplier[j]));
 #endif
   }
 

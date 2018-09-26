@@ -58,6 +58,9 @@ AdvancedColumnFamilyOptions::AdvancedColumnFamilyOptions(const Options& options)
       arena_block_size(options.arena_block_size),
       compression_per_level(options.compression_per_level),
       num_levels(options.num_levels),
+      num_logical_levels(options.num_logical_levels),
+      rpl(options.rpl),
+      rpl_multiplier(options.rpl_multiplier),
       level0_slowdown_writes_trigger(options.level0_slowdown_writes_trigger),
       level0_stop_writes_trigger(options.level0_stop_writes_trigger),
       target_file_size_base(options.target_file_size_base),
@@ -155,6 +158,19 @@ void ColumnFamilyOptions::Dump(Logger* log) const {
                          ? "nullptr"
                          : memtable_insert_with_hint_prefix_extractor->Name());
     ROCKS_LOG_HEADER(log, "            Options.num_levels: %d", num_levels);
+    ROCKS_LOG_HEADER(log, "            Options.num_logical_levels: %d", num_logical_levels);
+    if (num_logical_levels > 0) {
+      for (size_t i = 0; i < rpl.size(); i++) {
+        ROCKS_LOG_HEADER(
+            log, "       Options.rpl[%" ROCKSDB_PRIszt "]: %" ROCKSDB_PRIszt, i,
+            rpl[i]);
+      }
+      for (size_t i = 0; i < rpl_multiplier.size(); i++) {
+        ROCKS_LOG_HEADER(
+            log, "       Options.rpl_multiplier[%" ROCKSDB_PRIszt "]: %" ROCKSDB_PRIszt, i,
+            rpl_multiplier[i]);
+      }
+    }
     ROCKS_LOG_HEADER(log, "       Options.min_write_buffer_number_to_merge: %d",
                      min_write_buffer_number_to_merge);
     ROCKS_LOG_HEADER(log, "    Options.max_write_buffer_number_to_maintain: %d",

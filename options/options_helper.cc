@@ -281,6 +281,41 @@ bool SerializeVectorCompressionType(const std::vector<CompressionType>& types,
   return true;
 }
 
+bool SerializeVectorSizeT(const std::vector<size_t>& types,
+                                    std::string* value) {
+  std::stringstream ss;
+  for (size_t i = 0; i < types.size(); ++i) {
+    if (i > 0) {
+      ss << ':';
+    }
+    std::string string_type = ToString(types[i]);
+    ss << string_type;
+  }
+  *value = ss.str();
+  return true;
+}
+
+bool ParseVectorSizeT(
+    const std::string& value,
+    std::vector<size_t>* vec) {
+  vec->clear();
+  size_t start = 0;
+  while (start < value.size()) {
+    size_t end = value.find(':', start);
+    size_t number;
+    if (end == std::string::npos) {
+      number = ParseSizeT(value.substr(start));
+      vec->emplace_back(number);
+      break;
+    } else {
+      number = ParseSizeT(value.substr(start, end - start));
+      vec->emplace_back(number);
+      start = end + 1;
+    }
+  }
+  return true;
+}
+
 bool ParseVectorCompressionType(
     const std::string& value,
     std::vector<CompressionType>* compression_per_level) {
@@ -482,6 +517,9 @@ bool ParseOptionHelper(char* opt_address, const OptionType& opt_type,
     case OptionType::kVectorCompressionType:
       return ParseVectorCompressionType(
           value, reinterpret_cast<std::vector<CompressionType>*>(opt_address));
+    case OptionType::kVectorSizeT:
+      return ParseVectorSizeT(
+          value, reinterpret_cast<std::vector<size_t>*>(opt_address));
     case OptionType::kSliceTransform:
       return ParseSliceTransform(
           value, reinterpret_cast<std::shared_ptr<const SliceTransform>*>(
@@ -600,6 +638,11 @@ bool SerializeSingleOptionHelper(const char* opt_address,
     case OptionType::kVectorCompressionType:
       return SerializeVectorCompressionType(
           *(reinterpret_cast<const std::vector<CompressionType>*>(opt_address)),
+          value);
+      break;
+    case OptionType::kVectorSizeT:
+      return SerializeVectorSizeT(
+          *(reinterpret_cast<const std::vector<size_t>*>(opt_address)),
           value);
       break;
     case OptionType::kSliceTransform: {
@@ -1754,6 +1797,17 @@ std::unordered_map<std::string, OptionTypeInfo>
         {"num_levels",
          {offset_of(&ColumnFamilyOptions::num_levels), OptionType::kInt,
           OptionVerificationType::kNormal, false, 0}},
+        {"num_logical_levels",
+         {offset_of(&ColumnFamilyOptions::num_logical_levels), OptionType::kSizeT,
+          OptionVerificationType::kNormal, false, 0}},
+        {"rpl",
+         {offset_of(&ColumnFamilyOptions::rpl),
+          OptionType::kVectorSizeT, OptionVerificationType::kNormal,
+          false, 0}},
+        {"rpl_multiplier",
+         {offset_of(&ColumnFamilyOptions::rpl_multiplier),
+          OptionType::kVectorSizeT, OptionVerificationType::kNormal,
+          false, 0}},
         {"source_compaction_factor",
          {0, OptionType::kInt, OptionVerificationType::kDeprecated, true, 0}},
         {"target_file_size_multiplier",

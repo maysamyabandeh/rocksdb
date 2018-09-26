@@ -65,6 +65,15 @@ TEST_F(OptionsTest, GetOptionsFromMapTest) {
       {"bottommost_compression_opts", "5:6:7:8:9:true"},
       {"compression_opts", "4:5:6:7:8:true"},
       {"num_levels", "8"},
+      {"num_logical_levels", "3"},
+      {"rpl",
+       "0:"
+       "4:"
+       "1"},
+      {"rpl_multiplier",
+       "0:"
+       "1:"
+       "2"},
       {"level0_file_num_compaction_trigger", "8"},
       {"level0_slowdown_writes_trigger", "9"},
       {"level0_stop_writes_trigger", "10"},
@@ -139,6 +148,8 @@ TEST_F(OptionsTest, GetOptionsFromMapTest) {
 
   ColumnFamilyOptions base_cf_opt;
   ColumnFamilyOptions new_cf_opt;
+  // Check the default value
+  ASSERT_EQ(new_cf_opt.num_logical_levels, 0);
   ASSERT_OK(GetColumnFamilyOptionsFromMap(
             base_cf_opt, cf_options_map, &new_cf_opt));
   ASSERT_EQ(new_cf_opt.write_buffer_size, 1U);
@@ -170,6 +181,15 @@ TEST_F(OptionsTest, GetOptionsFromMapTest) {
   ASSERT_EQ(new_cf_opt.bottommost_compression_opts.zstd_max_train_bytes, 9);
   ASSERT_EQ(new_cf_opt.bottommost_compression_opts.enabled, true);
   ASSERT_EQ(new_cf_opt.num_levels, 8);
+  ASSERT_EQ(new_cf_opt.num_logical_levels, 3);
+  ASSERT_EQ(new_cf_opt.rpl.size(), new_cf_opt.num_logical_levels);
+  ASSERT_EQ(new_cf_opt.rpl[0], 0);
+  ASSERT_EQ(new_cf_opt.rpl[1], 4);
+  ASSERT_EQ(new_cf_opt.rpl[2], 1);
+  ASSERT_EQ(new_cf_opt.rpl_multiplier[0], 0);
+  ASSERT_EQ(new_cf_opt.rpl_multiplier[1], 1);
+  ASSERT_EQ(new_cf_opt.rpl_multiplier[2], 2);
+
   ASSERT_EQ(new_cf_opt.level0_file_num_compaction_trigger, 8);
   ASSERT_EQ(new_cf_opt.level0_slowdown_writes_trigger, 9);
   ASSERT_EQ(new_cf_opt.level0_stop_writes_trigger, 10);

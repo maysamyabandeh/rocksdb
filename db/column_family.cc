@@ -220,6 +220,27 @@ ColumnFamilyOptions SanitizeOptions(const ImmutableDBOptions& db_options,
     result.num_levels = 3;
   }
 
+  // TODO(myabandeh): apply it only to adaptive LSM
+  if (result.num_logical_levels != 0) { // adaptive enabled
+    // then derive num_levels accordingly
+    int num_levels = 1; // L0
+    ROCKS_LOG_WARN(db_options.info_log.get(), "Target LSM Shape:");
+    for (size_t ll = 1; ll <= result.num_logical_levels; ll++) {
+      size_t rpl = result.rpl[ll];
+      size_t multiplier = result.rpl_multiplier[ll];
+      size_t add = rpl * multiplier;
+      ROCKS_LOG_WARN(db_options.info_log.get(), "LL%d: %zux [L%d:L%d]", ll, rpl,
+                     num_levels, num_levels + add - 1);
+      num_levels += add;
+    }
+    result.num_levels = num_levels;
+
+    ROCKS_LOG_WARN(db_options.info_log.get(), "num_logical_levels %zu num_levels %d\n", result.num_logical_levels, result.num_levels);
+    for (int l = 0; l < num_levels; l++) {
+    }
+  }
+
+
   if (result.max_write_buffer_number < 2) {
     result.max_write_buffer_number = 2;
   }

@@ -545,6 +545,13 @@ bool AreEqualOptions(
           reinterpret_cast<const std::vector<CompressionType>*>(offset2);
       return (*vec1 == *vec2);
     }
+    case OptionType::kVectorSizeT: {
+      const auto* vec1 =
+          reinterpret_cast<const std::vector<size_t>*>(offset1);
+      const auto* vec2 =
+          reinterpret_cast<const std::vector<size_t>*>(offset2);
+      return (*vec1 == *vec2);
+    }
     case OptionType::kChecksumType:
       return (*reinterpret_cast<const ChecksumType*>(offset1) ==
               *reinterpret_cast<const ChecksumType*>(offset2));

@@ -59,6 +59,7 @@ enum class OptionType {
   kSliceTransform,
   kCompressionType,
   kVectorCompressionType,
+  kVectorSizeT,
   kTableFactory,
   kComparator,
   kCompactionFilter,

@@ -366,6 +366,13 @@ struct AdvancedColumnFamilyOptions {
   // Number of levels for this database
   int num_levels = 7;
 
+  // If not-zero it enables adaptive layering. Each logical layer will be mapped to one or more physical layer.
+  size_t num_logical_levels = 0;
+  // Run-per-level in adaptive LSM.
+  // TODO(myabandeh): remove the first entry for L0
+  std::vector<size_t> rpl = {0, 3, 2, 2, 1, 1};
+  std::vector<size_t> rpl_multiplier = {0, 4, 3, 4, 1, 1};
+
   // Soft limit on number of level-0 files. We start slowing down writes at this
   // point. A value <0 means that no writing slow down will be triggered by
   // number of files in level-0.

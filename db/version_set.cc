@@ -2540,9 +2540,8 @@ void VersionStorageInfo::CalculateBaseBytes(const ImmutableCFOptions& ioptions,
 
   level_max_bytes_.resize(ioptions.num_levels);
 
-  //TODO(myabandeh): read it from options
-  size_t num_llevels = ioptions.num_levels;
-  // currently the levels will be cut off after num_levels. we should later adjust num_levels based on ioptions.num_llevels
+  size_t num_llevels = ioptions.num_logical_levels;
+  assert(num_llevels);
   llevel_max_runs_.resize(num_llevels+1); // there is no logical l0
   llevel_fanout_.resize(num_llevels+1);
   l_to_ll_.resize(ioptions.num_levels);
@@ -2552,18 +2551,9 @@ void VersionStorageInfo::CalculateBaseBytes(const ImmutableCFOptions& ioptions,
 
   if (!ioptions.level_compaction_dynamic_level_bytes) {
     base_level_ = (ioptions.compaction_style == kCompactionStyleLevel) ? 1 : -1;
-    //TODO(myabandeh): fill it up from options
-    size_t default_mr = 2;
     for (size_t i = 1; i <= num_llevels; ++i) {
-      llevel_max_runs_[i] = default_mr;
+      llevel_max_runs_[i] = ioptions.rpl[i];
       llevel_fanout_[i] = options.max_bytes_for_level_multiplier;
-    }
-    // exceptions
-    // TODO(myabandeh): fill it up from options
-    llevel_max_runs_[1] = 3;
-    // leveled layers
-    for (size_t i = 3; i <= num_llevels; ++i) {
-      llevel_max_runs_[i] = 1;
     }
 
     size_t r = 0;
@@ -2578,17 +2568,11 @@ void VersionStorageInfo::CalculateBaseBytes(const ImmutableCFOptions& ioptions,
       }
       bool reserved = false;
       bool new_ll = false;
-      // 2x to reserve space for lazy compaction
       if (ll != 0) {
         size_t rpl = llevel_max_runs_[ll];
         if (rpl != 1) { // tiered
-          if (ll == 1) {
-            rpl = 4 * rpl;
-          } else if (ll == 3) {
-            rpl = 4 * rpl;
-          } else {
-            rpl = 3 * rpl;
-          }
+          // multiply rpl to reserve space for lazy compaction
+          rpl = ioptions.rpl_multiplier[ll] * rpl;
         }
         bool cut_level = r == rpl;
         if (cut_level) {
