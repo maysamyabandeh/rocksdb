@@ -102,9 +102,10 @@ struct ImmutableCFOptions {
   int num_levels;
 
   // adaptive lsm
-  int num_logical_levels = 5;
-  std::vector<size_t> rpl = {0, 3, 2, 2, 1, 1};
-  std::vector<size_t> rpl_multiplier = {0, 4, 3, 4, 1, 1};
+  int num_logical_levels;
+  std::vector<size_t> rpl;
+  std::vector<size_t> rpl_multiplier;
+  std::vector<size_t> fanout;
 
   bool optimize_filters_for_hits;
 

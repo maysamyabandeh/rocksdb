@@ -2553,7 +2553,7 @@ void VersionStorageInfo::CalculateBaseBytes(const ImmutableCFOptions& ioptions,
     base_level_ = (ioptions.compaction_style == kCompactionStyleLevel) ? 1 : -1;
     for (size_t i = 1; i <= num_llevels; ++i) {
       llevel_max_runs_[i] = ioptions.rpl[i];
-      llevel_fanout_[i] = options.max_bytes_for_level_multiplier;
+      llevel_fanout_[i] = ioptions.fanout[i];
     }
 
     size_t r = 0;
@@ -2599,7 +2599,7 @@ void VersionStorageInfo::CalculateBaseBytes(const ImmutableCFOptions& ioptions,
                       : MultiplyCheckOverflow(
                             MultiplyCheckOverflow(
                                 last_nonempty_size,
-                                options.max_bytes_for_level_multiplier),
+                                llevel_fanout_[ll]),
                             options.MaxBytesMultiplerAdditional(i - 1));
           last_nonempty_size = level_max_bytes_[i];
         }

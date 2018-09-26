@@ -35,6 +35,7 @@
 #include "util/autovector.h"
 #include "util/compression.h"
 #include "util/sst_file_manager_impl.h"
+#include "util/string_util.h"
 
 namespace rocksdb {
 
@@ -225,11 +226,13 @@ ColumnFamilyOptions SanitizeOptions(const ImmutableDBOptions& db_options,
     // then derive num_levels accordingly
     int num_levels = 1; // L0
     ROCKS_LOG_WARN(db_options.info_log.get(), "Target LSM Shape:");
+    size_t size = result.max_bytes_for_level_base;
     for (size_t ll = 1; ll <= result.num_logical_levels; ll++) {
       size_t rpl = result.rpl[ll];
       size_t multiplier = result.rpl_multiplier[ll];
       size_t add = rpl * multiplier;
-      ROCKS_LOG_WARN(db_options.info_log.get(), "LL%d: %zux [L%d:L%d]", ll, rpl,
+      size *= result.fanout[ll];
+      ROCKS_LOG_WARN(db_options.info_log.get(), "LL%d: %zux %9s [L%d:L%d]", ll, rpl, BytesToHumanString(size).c_str(),
                      num_levels, num_levels + add - 1);
       num_levels += add;
     }

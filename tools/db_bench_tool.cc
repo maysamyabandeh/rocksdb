@@ -582,6 +582,10 @@ static std::vector<size_t> FLAGS_rpl_multiplier_v;
 DEFINE_string(rpl_multiplier, "",
               "A vector that specifies runs per level in adaptive lsm");
 
+static std::vector<size_t> FLAGS_fanout_v;
+DEFINE_string(fanout, "",
+              "A vector that specifies runs fanout in adaptive lsm");
+
 DEFINE_int64(target_file_size_base, rocksdb::Options().target_file_size_base,
              "Target file size at level-1");
 
@@ -3360,6 +3364,12 @@ void VerifyDBFromDB(std::string& truth_db_name) {
         exit(1);
       }
       options.rpl_multiplier = FLAGS_rpl_multiplier_v;
+      if (FLAGS_num_logical_levels + 1 != FLAGS_fanout_v.size()) {
+        fprintf(stderr, "Insufficient number of fanout specified %zu\n",
+                FLAGS_fanout_v.size());
+        exit(1);
+      }
+      options.fanout = FLAGS_fanout_v;
     }
     options.level0_stop_writes_trigger = FLAGS_level0_stop_writes_trigger;
     options.level0_file_num_compaction_trigger =
@@ -5726,6 +5736,17 @@ int db_bench_tool(int argc, char** argv) {
         std::stoi(rpl_multiplier[j]));
 #else
         stoi(rpl_multiplier[j]));
+#endif
+  }
+
+  std::vector<std::string> logical_fanout = rocksdb::StringSplit(
+      FLAGS_fanout, ',');
+  for (size_t j = 0; j < logical_fanout.size(); j++) {
+    FLAGS_fanout_v.push_back(
+#ifndef CYGWIN
+        std::stoi(logical_fanout[j]));
+#else
+        stoi(logical_fanout[j]));
 #endif
   }
 

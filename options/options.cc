@@ -61,6 +61,7 @@ AdvancedColumnFamilyOptions::AdvancedColumnFamilyOptions(const Options& options)
       num_logical_levels(options.num_logical_levels),
       rpl(options.rpl),
       rpl_multiplier(options.rpl_multiplier),
+      fanout(options.fanout),
       level0_slowdown_writes_trigger(options.level0_slowdown_writes_trigger),
       level0_stop_writes_trigger(options.level0_stop_writes_trigger),
       target_file_size_base(options.target_file_size_base),
@@ -169,6 +170,11 @@ void ColumnFamilyOptions::Dump(Logger* log) const {
         ROCKS_LOG_HEADER(
             log, "       Options.rpl_multiplier[%" ROCKSDB_PRIszt "]: %" ROCKSDB_PRIszt, i,
             rpl_multiplier[i]);
+      }
+      for (size_t i = 0; i < fanout.size(); i++) {
+        ROCKS_LOG_HEADER(
+            log, "       Options.fanout[%" ROCKSDB_PRIszt "]: %" ROCKSDB_PRIszt,
+            i, fanout[i]);
       }
     }
     ROCKS_LOG_HEADER(log, "       Options.min_write_buffer_number_to_merge: %d",
