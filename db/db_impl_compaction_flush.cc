@@ -109,7 +109,6 @@ Status DBImpl::FlushMemTableToOutputFile(
   mutex_.AssertHeld();
   assert(cfd->imm()->NumNotFlushed() != 0);
   assert(cfd->imm()->IsFlushPending());
-
   SequenceNumber earliest_write_conflict_snapshot;
   std::vector<SequenceNumber> snapshot_seqs =
       snapshots_.GetAll(&earliest_write_conflict_snapshot);
@@ -1442,6 +1441,53 @@ Status DBImpl::BackgroundFlush(bool* made_progress, JobContext* job_context,
   while (!flush_queue_.empty()) {
     // This cfd is already referenced
     const FlushRequest& flush_req = PopFirstFromFlushQueue();
+
+    bool retry = false;
+    for (const auto& iter : flush_req) {
+      ColumnFamilyData* cfd = iter.first;
+        {
+        auto vstorage = cfd->current()->storage_info();
+        const int llevel = 1;
+        const int start_level = vstorage->ll_to_l_[llevel];
+        const int next_level = vstorage->ll_to_l_[llevel + 1];
+        int empty_levels = 0;
+        auto level = next_level - 1;
+        for (; level >= start_level; level--) {
+          bool empty = vstorage->files_[level].size() == 0;
+          if (empty) {
+            empty_levels++;
+          }
+        }
+        // TODO(myabandeh): hack to avoid unavailable level 1 when the file is ready to be installed
+        if (empty_levels < 4) {
+          retry = true;
+        } else {
+          ROCKS_LOG_INFO(immutable_db_options_.info_log,
+                         "job_id: %d manifest: %lu", job_context->job_id,
+                         cfd->current()->version_set()->manifest_file_number());
+        }
+        }
+    } // for flush_req
+    if (retry) {
+      bg_cv_.SignalAll();  // In case a waiter can proceed despite the error
+      mutex_.Unlock();
+      ROCKS_LOG_ERROR(immutable_db_options_.info_log,
+                      "Waiting for empty slot in L1 job_id: %d",
+                      job_context->job_id);
+      log_buffer->FlushBufferToLog();
+      LogFlush(immutable_db_options_.info_log);
+      env_->SleepForMicroseconds(1000000);
+      mutex_.Lock();
+
+      for (const auto& iter : flush_req) {
+        ColumnFamilyData* cfd = iter.first;
+        if (cfd->Unref()) {
+          delete cfd;
+        }
+      }
+      SchedulePendingFlush(flush_req, FlushReason::kOthers);
+      return Status::OK();
+    }
     superversion_contexts.clear();
     superversion_contexts.reserve(flush_req.size());
 

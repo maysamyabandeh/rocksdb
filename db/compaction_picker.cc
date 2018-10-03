@@ -1421,7 +1421,7 @@ Compaction* LevelCompactionBuilder::PickCompaction(LogBuffer* log_buffer) {
   (void)log_buffer;
   compaction_inputs_.clear();
     // Check for trivial moves
-  {
+  if (0){
   int next_level = 0;
   for (int l = 1; l <= vstorage_->MaxInputLevel(); l = next_level) {
     auto start_level = l;

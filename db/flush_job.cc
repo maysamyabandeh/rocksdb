@@ -214,7 +214,8 @@ Status FlushJob::Run(LogsWithPrepTracker* prep_tracker,
   }
 
   // This will release and re-acquire the mutex.
-  Status s = WriteLevel0Table();
+  int output_level = 0;
+  Status s = WriteLevel0Table(&output_level);
 
   if (s.ok() &&
       (shutting_down_->load(std::memory_order_acquire) || cfd_->IsDropped())) {
@@ -230,7 +231,7 @@ Status FlushJob::Run(LogsWithPrepTracker* prep_tracker,
     s = cfd_->imm()->InstallMemtableFlushResults(
         cfd_, mutable_cf_options_, mems_, prep_tracker, versions_, db_mutex_,
         meta_.fd.GetNumber(), &job_context_->memtables_to_free, db_directory_,
-        log_buffer_);
+        log_buffer_, output_level);
   }
 
   if (s.ok() && file_meta != nullptr) {
@@ -239,7 +240,7 @@ Status FlushJob::Run(LogsWithPrepTracker* prep_tracker,
   RecordFlushIOStats();
 
   auto stream = event_logger_->LogToBuffer(log_buffer_);
-  stream << "job" << job_context_->job_id << "event"
+  stream << "job" << job_context_->job_id << "status" << s.ToString() << "event"
          << "flush_finished";
   stream << "output_compression"
          << CompressionTypeToString(output_compression_);
@@ -273,7 +274,7 @@ void FlushJob::Cancel() {
   base_->Unref();
 }
 
-Status FlushJob::WriteLevel0Table() {
+Status FlushJob::WriteLevel0Table(int* output_level) {
   AutoThreadOperationStageUpdater stage_updater(
       ThreadStatus::STAGE_FLUSH_WRITE_L0);
   db_mutex_->AssertHeld();
@@ -387,10 +388,44 @@ Status FlushJob::WriteLevel0Table() {
     // threads could be concurrently producing compacted files for
     // that key range.
     // Add file to L0
-    edit_->AddFile(0 /* level */, meta_.fd.GetNumber(), meta_.fd.GetPathId(),
+
+  {
+    auto vstorage = cfd_->current()->storage_info();
+    const int llevel = 1;
+    const int start_level = vstorage->ll_to_l_[llevel];
+    const int next_level = vstorage->ll_to_l_[llevel + 1];
+
+    bool empty = false;
+    auto level = next_level - 1;
+    for (; !empty && level >= start_level; level--) {
+      empty = vstorage->files_[level].size() == 0;
+      empty = empty && !cfd_->compaction_picker()->IsReserveLL1(level);
+      if (empty) {
+        break;
+      }
+    }
+    *output_level = level;
+    cfd_->compaction_picker()->ReserveLL1(*output_level);
+    ROCKS_LOG_INFO(db_options_.info_log,
+                   "[%s] [JOB %d] Level-1 (to %d) flush table #%" PRIu64,
+                   cfd_->GetName().c_str(), job_context_->job_id,
+                   *output_level,
+                   meta_.fd.GetNumber());
+   // printf("start: %d next: %d level: %d job_id: %d\n", start_level, next_level, level, job_context_->job_id);
+   // fflush(stdout);
+    assert(empty);
+  }
+
+    edit_->AddFile(*output_level, meta_.fd.GetNumber(), meta_.fd.GetPathId(),
                    meta_.fd.GetFileSize(), meta_.smallest, meta_.largest,
                    meta_.fd.smallest_seqno, meta_.fd.largest_seqno,
                    meta_.marked_for_compaction);
+    //printf("KILLL0 AddFile level: %d fd: %lu\n", output_level, meta_.fd.GetNumber());
+    ROCKS_LOG_INFO(db_options_.info_log,
+                   "[%s] KILLL0 Moving #%" PRIu64 " to level-%d %" PRIu64
+                   " bytes\n",
+                   cfd_->GetName().c_str(), meta_.fd.GetNumber(), *output_level,
+                   meta_.fd.GetFileSize());
   }
 
   // Note that here we treat flush as level 0 compaction in internal stats
@@ -402,6 +437,7 @@ Status FlushJob::WriteLevel0Table() {
   cfd_->internal_stats()->AddCFStats(InternalStats::BYTES_FLUSHED,
                                      meta_.fd.GetFileSize());
   RecordFlushIOStats();
+
   return s;
 }
 

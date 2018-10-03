@@ -35,6 +35,10 @@ class CompactionPicker {
                    const InternalKeyComparator* icmp);
   virtual ~CompactionPicker();
 
+  virtual bool IsReserveLL1(int) { return false;}
+  virtual void ReserveLL1(int) {};
+  virtual void ReleaseLL1(int) {};
+
   // Pick level and inputs for a new compaction.
   // Returns nullptr if there is no compaction to be done.
   // Otherwise returns a pointer to a heap-allocated object that
@@ -233,6 +237,19 @@ class LevelCompactionPicker : public CompactionPicker {
 
   virtual bool NeedsCompaction(
       const VersionStorageInfo* vstorage) const override;
+
+  virtual bool IsReserveLL1(int level) {
+    return reserved_ll1s.find(level) != reserved_ll1s.end();
+  }
+  virtual void ReserveLL1(int level) {
+    assert(reserved_ll1s.find(level) == reserved_ll1s.end());
+    reserved_ll1s.insert(level);
+  };
+  virtual void ReleaseLL1(int level) {
+    assert(reserved_ll1s.find(level) != reserved_ll1s.end());
+    reserved_ll1s.erase(reserved_ll1s.find(level));
+  };
+  std::set<int> reserved_ll1s;
 };
 
 #ifndef ROCKSDB_LITE

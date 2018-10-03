@@ -82,7 +82,7 @@ class FlushJob {
   void ReportStartedFlush();
   void ReportFlushInputSize(const autovector<MemTable*>& mems);
   void RecordFlushIOStats();
-  Status WriteLevel0Table();
+  Status WriteLevel0Table(int* output_level);
   const std::string& dbname_;
   ColumnFamilyData* cfd_;
   const ImmutableDBOptions& db_options_;

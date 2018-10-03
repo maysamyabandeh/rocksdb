@@ -326,7 +326,7 @@ Status MemTableList::InstallMemtableFlushResults(
     const autovector<MemTable*>& mems, LogsWithPrepTracker* prep_tracker,
     VersionSet* vset, InstrumentedMutex* mu, uint64_t file_number,
     autovector<MemTable*>* to_delete, Directory* db_directory,
-    LogBuffer* log_buffer) {
+    LogBuffer* log_buffer, int level) {
   AutoThreadOperationStageUpdater stage_updater(
       ThreadStatus::STAGE_MEMTABLE_INSTALL_FLUSH_RESULTS);
   mu->AssertHeld();
@@ -338,6 +338,7 @@ Status MemTableList::InstallMemtableFlushResults(
 
     mems[i]->flush_completed_ = true;
     mems[i]->file_number_ = file_number;
+    mems[i]->level_ = level;
   }
 
   // if some other thread is already committing, then return
@@ -364,6 +365,7 @@ Status MemTableList::InstallMemtableFlushResults(
     size_t batch_count = 0;
     autovector<VersionEdit*> edit_list;
     autovector<MemTable*> memtables_to_flush;
+    autovector<int> levels;
     // enumerate from the last (earliest) element to see how many batch finished
     for (auto it = memlist.rbegin(); it != memlist.rend(); ++it) {
       MemTable* m = *it;
@@ -376,6 +378,7 @@ Status MemTableList::InstallMemtableFlushResults(
                          "[%s] Level-0 commit table #%" PRIu64 " started",
                          cfd->GetName().c_str(), m->file_number_);
         edit_list.push_back(&m->edit_);
+        levels.push_back(m->level_);
         memtables_to_flush.push_back(m);
       }
       batch_count++;
@@ -397,6 +400,9 @@ Status MemTableList::InstallMemtableFlushResults(
       // we will be changing the version in the next code path,
       // so we better create a new one, since versions are immutable
       InstallNewVersion();
+      for (auto l: levels) {
+        cfd->compaction_picker()->ReleaseLL1(l);
+      }
 
       // All the later memtables that have the same filenum
       // are part of the same batch. They can be committed now.
