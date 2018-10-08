@@ -136,6 +136,7 @@ CompactionPicker::~CompactionPicker() {}
 
 // Delete this compaction from the list of running compactions.
 void CompactionPicker::ReleaseCompactionFiles(Compaction* c, Status status) {
+  assert(c->output_gen_);
   UnregisterCompaction(c);
  //bool retargeted = false;
  //do {
@@ -956,6 +957,7 @@ void CompactionPicker::RegisterCompaction(Compaction* c) {
   if (c == nullptr) {
     return;
   }
+  SetLevelGeneration(c->output_level_, c->output_gen_);
   if (!(ioptions_.compaction_style != kCompactionStyleLevel ||
          c->output_level() == 0 ||
          !FilesRangeOverlapWithCompaction(*c->inputs(), c->output_level()))) {
@@ -1196,6 +1198,8 @@ class LevelCompactionBuilder {
   CompactionInputFiles output_level_inputs_;
   std::vector<FileMetaData*> grandparents_;
   CompactionReason compaction_reason_ = CompactionReason::kUnknown;
+  
+  size_t output_gen_ = 0;
 
   const MutableCFOptions& mutable_cf_options_;
   const ImmutableCFOptions& ioptions_;
@@ -1591,6 +1595,15 @@ Compaction* LevelCompactionBuilder::PickCompaction(LogBuffer* log_buffer) {
         continue;
       }
     }
+    size_t max_gen = 0;
+    for (int level = start_level; level < next_level; level++) {
+      bool reserved = false;
+      if (reserved) {
+        auto gen = compaction_picker_->generation(level);
+        max_gen = max_gen == 0 ? gen : std::min(max_gen, gen);
+      }
+    }
+    output_gen_ = 0;
     for (int level = start_level; level < next_level; level++) {
       CompactionInputFiles level_inputs;
       level_inputs.level = level;
@@ -1617,6 +1630,13 @@ Compaction* LevelCompactionBuilder::PickCompaction(LogBuffer* log_buffer) {
         }
         assert(!level_inputs.files.empty());
       }
+      auto level_gen = compaction_picker_->generation(level);
+      assert(level_gen);
+      if (max_gen && max_gen <= level_gen) {
+      ROCKS_LOG_INFO(ioptions_.info_log, "skip level %d with gen %zu to avoid compaction gap by gen %zu", level, level_gen, max_gen);
+      continue;
+      }
+      output_gen_ = std::max(output_gen_, level_gen);
       compaction_inputs_.push_back(level_inputs);
       // TODO(myabandeh): remove the log line
       ROCKS_LOG_INFO(ioptions_.info_log, "compaction_inputs_ push_back: %zu files from level %d", level_inputs.files.size(), level_inputs.level);
@@ -1626,14 +1646,18 @@ Compaction* LevelCompactionBuilder::PickCompaction(LogBuffer* log_buffer) {
        ROCKS_LOG_INFO(ioptions_.info_log, "skip compaction score %f level %d due to empty input", start_level_score_, start_llevel);
        continue;
     }
+    // TODO(myabandeh): skip if two few sorted runs
+    assert(output_gen_);
     if (!tiered && !LevelIsEmpty(output_level_)) { // include output in input
       CompactionInputFiles level_inputs;
       level_inputs.level = output_level_;
+      output_gen_ = std::max(output_gen_, compaction_picker_->generation(output_level_));
       level_inputs.files = vstorage_->files_[output_level_];
       // TODO(myabandeh): remove the log line
       ROCKS_LOG_INFO(ioptions_.info_log, "compaction_inputs_ push_back: %zu files from level %d", level_inputs.files.size(), level_inputs.level);
       compaction_inputs_.push_back(level_inputs);
     }
+    assert(output_gen_);
     // TODO(myabandeh): remove the log line
     ROCKS_LOG_INFO(ioptions_.info_log, "compaction score: %f to %d", start_level_score_, output_level_);
 
@@ -1681,6 +1705,7 @@ Compaction* LevelCompactionBuilder::PickCompaction(LogBuffer* log_buffer) {
 }
 
 Compaction* LevelCompactionBuilder::GetCompaction() {
+  assert(output_gen_);
   auto c = new Compaction(
       vstorage_, ioptions_, mutable_cf_options_, std::move(compaction_inputs_),
       output_level_,
@@ -1694,6 +1719,7 @@ Compaction* LevelCompactionBuilder::GetCompaction() {
       GetCompressionOptions(ioptions_, vstorage_, output_level_),
       /* max_subcompactions */ 0, std::move(grandparents_), is_manual_,
       start_level_score_, false /* deletion_compaction */, compaction_reason_);
+  c->output_gen_ = output_gen_;
 
   // If it's level 0 compaction, make sure we don't execute any other level 0
   // compactions in parallel

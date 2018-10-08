@@ -256,6 +256,8 @@ class Compaction {
   uint64_t MaxInputFileCreationTime() const;
 
  private:
+  friend class LevelCompactionPicker;
+  friend class CompactionPicker;
   // mark (or clear) all files that are being compacted
   void MarkFilesBeingCompacted(bool mark_as_compacted);
 
@@ -332,6 +334,9 @@ class Compaction {
 
   // Reason for compaction
   CompactionReason compaction_reason_;
+
+ public:
+  size_t output_gen_ = 0;
 };
 
 // Utility function

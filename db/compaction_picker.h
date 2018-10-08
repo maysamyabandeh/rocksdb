@@ -38,6 +38,8 @@ class CompactionPicker {
   virtual bool IsReserveLL1(int) { return false;}
   virtual void ReserveLL1(int) {};
   virtual void ReleaseLL1(int) {};
+  virtual void SetLevelGeneration(int, size_t) {};
+  virtual size_t generation(int) {return 0;}
 
   // Pick level and inputs for a new compaction.
   // Returns nullptr if there is no compaction to be done.
@@ -248,8 +250,19 @@ class LevelCompactionPicker : public CompactionPicker {
   virtual void ReleaseLL1(int level) {
     assert(reserved_ll1s.find(level) != reserved_ll1s.end());
     reserved_ll1s.erase(reserved_ll1s.find(level));
+    SetLevelGeneration(level, ++curr_gen_);
   };
+  virtual void SetLevelGeneration(int level, size_t gen) {
+    generation_[level] = gen;
+    ROCKS_LOG_INFO(ioptions_.info_log, "Level %d generation %zu\n", level,
+                   generation_[level]);
+    //printf("level %d gen %zu\n", level, generation_[level]);
+  }
+  virtual size_t generation(int level) {return generation_[level];}
   std::set<int> reserved_ll1s;
+  std::map<int, size_t> generation_;
+  // TODO(myabandeh): initialize it after each restart
+  size_t curr_gen_ = 0;
 };
 
 #ifndef ROCKSDB_LITE
