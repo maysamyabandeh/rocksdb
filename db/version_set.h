@@ -419,6 +419,7 @@ class VersionStorageInfo {
  public:
   std::vector<size_t> llevel_max_runs_;
   std::vector<size_t> llevel_fanout_;
+  std::vector<size_t> age_;
 
   // A short brief metadata of files per level
   autovector<rocksdb::LevelFilesBrief> level_files_brief_;

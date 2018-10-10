@@ -1914,6 +1914,7 @@ Status DBImpl::BackgroundCompaction(bool* made_progress,
     *made_progress = true;
   } else if (!trivial_move_disallowed && c->IsTrivialMove()) {
     TEST_SYNC_POINT("DBImpl::BackgroundCompaction:TrivialMove");
+    assert(0); // TODO(myabandeh): until we add age update logic to it
     // Instrument for event update
     // TODO(yhchiang): add op details for showing trivial-move.
     ThreadStatusUtil::SetColumnFamily(

@@ -1398,6 +1398,10 @@ Status CompactionJob::InstallCompactionResults(
       compaction->edit()->AddFile(compaction->output_level(), out.meta);
     }
   }
+  assert(compaction->output_level());
+  assert(compaction->output_gen_);
+  compaction->edit()->UpdateAge(compaction->output_level(),
+                                compaction->output_gen_);
   auto ret = versions_->LogAndApply(compaction->column_family_data(),
                                 mutable_cf_options, compaction->edit(),
                                 db_mutex_, db_directory_);

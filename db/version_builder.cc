@@ -85,7 +85,7 @@ class VersionBuilder::Rep {
     // Map from file number to file meta data.
     std::unordered_map<uint64_t, FileMetaData*> added_files;
     // if non-zero, is the updated age of the level
-    size_t age;
+    size_t age = 0;
   };
 
   const EnvOptions& env_options_;
@@ -268,6 +268,15 @@ class VersionBuilder::Rep {
   void Apply(VersionEdit* edit) {
     CheckConsistency(base_vstorage_);
 
+    {
+      int level = edit->age_update_.first;
+      size_t age = edit->age_update_.second;
+      if (age) {
+        assert(level);
+        levels_[level].age = age;
+      }
+    }
+
     // Delete files
     const VersionEdit::DeletedFileSet& del = edit->GetDeletedFiles();
     for (const auto& del_file : del) {
@@ -322,6 +331,13 @@ class VersionBuilder::Rep {
     CheckConsistency(vstorage);
 
     for (int level = 0; level < num_levels_; level++) {
+      auto age = levels_[level].age;
+      if (age) {
+        assert(base_vstorage_->age_[level] < age);
+        vstorage->age_[level] = age;
+      } else {
+        vstorage->age_[level] = base_vstorage_->age_[level];
+      }
       const auto& cmp = (level == 0) ? level_zero_cmp_ : level_nonzero_cmp_;
       // Merge the set of added files with the set of pre-existing files.
       // Drop any deleted files.  Store the result in *v.

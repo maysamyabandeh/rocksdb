@@ -1097,6 +1097,7 @@ VersionStorageInfo::VersionStorageInfo(
       // cfd is nullptr if Version is dummy
       num_levels_(levels),
       num_non_empty_levels_(0),
+      age_(num_levels_),
       file_indexer_(user_comparator),
       compaction_style_(compaction_style),
       files_(new std::vector<FileMetaData*>[num_levels_]),
@@ -2523,6 +2524,13 @@ uint64_t VersionStorageInfo::MaxBytesForLevel(int level) const {
 
 void VersionStorageInfo::CalculateBaseBytes(const ImmutableCFOptions& ioptions,
                                             const MutableCFOptions& options) {
+ //ROCKS_LOG_INFO(ioptions.info_log, "LSM Age:");
+ //for (int l = 0; l < num_levels_; l++) {
+ //  if (age_.at(l) != 0) {
+ //    ROCKS_LOG_INFO(ioptions.info_log, "L%d: %lu", l, age_.at(l));
+ //  }
+ //}
+
   // Special logic to set number of sorted runs.
   // It is to match the previous behavior when all files are in L0.
   int num_l0_count = static_cast<int>(files_[0].size());
