@@ -333,6 +333,12 @@ class VersionEdit {
 
   DeletedFileSet deleted_files_;
   std::vector<std::pair<int, FileMetaData>> new_files_;
+ public:
+  // changed level age: level -> age
+  std::pair<int, size_t> age_update_ = {0,0};
+  void UpdateAge(int level, size_t age) { 
+    age_update_ = {level, age};
+  }
 
   // Each version edit record should have column_family_ set
   // If it's not set, it is default (0)

@@ -37,7 +37,8 @@ class CompactionPicker {
 
   virtual bool IsReserveLL1(int) { return false;}
   virtual void ReserveLL1(int) {};
-  virtual void ReleaseLL1(int) {};
+  virtual void ReleaseLL1(int, size_t) {};
+  virtual size_t IncGen() {return 0;}
   virtual void SetLevelGeneration(int, size_t) {};
   virtual size_t generation(int) {return 0;}
 
@@ -247,10 +248,13 @@ class LevelCompactionPicker : public CompactionPicker {
     assert(reserved_ll1s.find(level) == reserved_ll1s.end());
     reserved_ll1s.insert(level);
   };
-  virtual void ReleaseLL1(int level) {
+  virtual size_t IncGen() {
+    return ++curr_gen_;
+  }
+  virtual void ReleaseLL1(int level, size_t gen) {
     assert(reserved_ll1s.find(level) != reserved_ll1s.end());
     reserved_ll1s.erase(reserved_ll1s.find(level));
-    SetLevelGeneration(level, ++curr_gen_);
+    SetLevelGeneration(level, gen);
   };
   virtual void SetLevelGeneration(int level, size_t gen) {
     generation_[level] = gen;

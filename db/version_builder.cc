@@ -84,6 +84,8 @@ class VersionBuilder::Rep {
     std::unordered_set<uint64_t> deleted_files;
     // Map from file number to file meta data.
     std::unordered_map<uint64_t, FileMetaData*> added_files;
+    // if non-zero, is the updated age of the level
+    size_t age;
   };
 
   const EnvOptions& env_options_;

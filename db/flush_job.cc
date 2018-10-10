@@ -420,6 +420,8 @@ Status FlushJob::WriteLevel0Table(int* output_level) {
                    meta_.fd.GetFileSize(), meta_.smallest, meta_.largest,
                    meta_.fd.smallest_seqno, meta_.fd.largest_seqno,
                    meta_.marked_for_compaction);
+    assert(output_age_);
+    edit_->UpdateAge(*output_level, output_age_);
     //printf("KILLL0 AddFile level: %d fd: %lu\n", output_level, meta_.fd.GetNumber());
     ROCKS_LOG_INFO(db_options_.info_log,
                    "[%s] KILLL0 Moving #%" PRIu64 " to level-%d %" PRIu64

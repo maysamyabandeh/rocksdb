@@ -128,6 +128,7 @@ Status DBImpl::FlushMemTableToOutputFile(
   FileMetaData file_meta;
 
   flush_job.PickMemTable();
+  flush_job.output_age_ = cfd->compaction_picker()->IncGen();
 
 #ifndef ROCKSDB_LITE
   // may temporarily unlock and lock the mutex.

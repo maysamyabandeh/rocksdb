@@ -365,7 +365,7 @@ Status MemTableList::InstallMemtableFlushResults(
     size_t batch_count = 0;
     autovector<VersionEdit*> edit_list;
     autovector<MemTable*> memtables_to_flush;
-    autovector<int> levels;
+    autovector<std::pair<int, size_t>> age_updates;
     // enumerate from the last (earliest) element to see how many batch finished
     for (auto it = memlist.rbegin(); it != memlist.rend(); ++it) {
       MemTable* m = *it;
@@ -378,7 +378,7 @@ Status MemTableList::InstallMemtableFlushResults(
                          "[%s] Level-0 commit table #%" PRIu64 " started",
                          cfd->GetName().c_str(), m->file_number_);
         edit_list.push_back(&m->edit_);
-        levels.push_back(m->level_);
+        age_updates.push_back(m->edit_.age_update_);
         memtables_to_flush.push_back(m);
       }
       batch_count++;
@@ -400,8 +400,8 @@ Status MemTableList::InstallMemtableFlushResults(
       // we will be changing the version in the next code path,
       // so we better create a new one, since versions are immutable
       InstallNewVersion();
-      for (auto l: levels) {
-        cfd->compaction_picker()->ReleaseLL1(l);
+      for (auto update: age_updates) {
+        cfd->compaction_picker()->ReleaseLL1(update.first, update.second);
       }
 
       // All the later memtables that have the same filenum
