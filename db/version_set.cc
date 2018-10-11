@@ -991,7 +991,9 @@ void Version::AddIterators(const ReadOptions& read_options,
                            RangeDelAggregator* range_del_agg) {
   assert(storage_info_.finalized_);
 
-  for (int level = 0; level < storage_info_.num_non_empty_levels(); level++) {
+  for (int leveli = 0; leveli < storage_info_.num_non_empty_levels();
+       leveli++) {
+    auto level = storage_info_.ordered_level_[leveli].first;
     AddIteratorsForLevel(read_options, soptions, merge_iter_builder, level,
                          range_del_agg);
   }
