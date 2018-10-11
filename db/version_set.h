@@ -108,7 +108,7 @@ class VersionStorageInfo {
   void UpdateNumNonEmptyLevels();
 
   void GenerateFileIndexer() {
-    file_indexer_.UpdateIndex(&arena_, num_non_empty_levels_, files_);
+    file_indexer_.UpdateIndex(&arena_, num_non_empty_levels_, files_, ordered_level_);
   }
 
   // Update the accumulated stats from a file-meta.
@@ -420,6 +420,24 @@ class VersionStorageInfo {
   std::vector<size_t> llevel_max_runs_;
   std::vector<size_t> llevel_fanout_;
   std::vector<size_t> age_;
+  // <level, age>
+  std::vector<std::pair<size_t,size_t>> ordered_level_;
+
+  void UpdateLevelOrder() {
+    ordered_level_.resize(num_levels_);
+    for (int i = 0; i < num_levels_; i++) {
+      ordered_level_[i].first = i;
+      ordered_level_[i].second = age_[i];
+      if (files_[i].empty()) {
+        ordered_level_[i].second = 0;
+      }
+    }
+    std::sort(ordered_level_.begin(), ordered_level_.end(),
+              [](std::pair<size_t, size_t>& a, std::pair<size_t, size_t>& b) {
+                return a.second > b.second;
+              });
+  }
+
 
   // A short brief metadata of files per level
   autovector<rocksdb::LevelFilesBrief> level_files_brief_;

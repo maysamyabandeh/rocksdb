@@ -51,12 +51,13 @@ class FileIndexer {
   // smallest and largest key comparison for the current file specified by
   // level and file_index. When *left_index < *right_index, both index should
   // be valid and fit in the vector size.
-  void GetNextLevelIndex(const size_t level, const size_t file_index,
+  void GetNextLevelIndex(const size_t level, const size_t next_level, const size_t file_index,
                          const int cmp_smallest, const int cmp_largest,
                          int32_t* left_bound, int32_t* right_bound) const;
 
   void UpdateIndex(Arena* arena, const size_t num_levels,
-                   std::vector<FileMetaData*>* const files);
+                   std::vector<FileMetaData*>* const files,
+std::vector<std::pair<size_t,size_t>>& ordered_level);
 
   enum {
     // MSVC version 1800 still does not have constexpr for ::max()

@@ -117,9 +117,11 @@ class FilePicker {
              const Slice& ikey, autovector<LevelFilesBrief>* file_levels,
              unsigned int num_levels, FileIndexer* file_indexer,
              const Comparator* user_comparator,
-             const InternalKeyComparator* internal_comparator)
+             const InternalKeyComparator* internal_comparator,
+             const std::vector<std::pair<size_t, size_t>> ordered_level)
       : num_levels_(num_levels),
         curr_level_(static_cast<unsigned int>(-1)),
+        curr_level_index_(static_cast<unsigned int>(-1)),
         returned_file_level_(static_cast<unsigned int>(-1)),
         hit_file_level_(static_cast<unsigned int>(-1)),
         search_left_bound_(0),
@@ -128,6 +130,7 @@ class FilePicker {
         files_(files),
 #endif
         level_files_brief_(file_levels),
+        ordered_level_(ordered_level),
         is_hit_file_last_in_level_(false),
         curr_file_level_(nullptr),
         user_key_(user_key),
@@ -152,6 +155,12 @@ class FilePicker {
   }
 
   int GetCurrentLevel() const { return curr_level_; }
+  int GetNextLevel() const {
+    auto next_level_index = curr_level_index_ + 1;
+    return next_level_index < num_levels_
+                      ? ordered_level_[next_level_index].first
+                      : next_level_index;
+  }
 
   FdWithKeyRange* GetNextFile() {
     while (!search_ended_) {  // Loops over different levels.
@@ -192,6 +201,7 @@ class FilePicker {
           // comparison results
           if (curr_level_ > 0) {
             file_indexer_->GetNextLevelIndex(curr_level_,
+                                            GetNextLevel(),
                                             curr_index_in_curr_level_,
                                             cmp_smallest, cmp_largest,
                                             &search_left_bound_,
@@ -252,6 +262,7 @@ class FilePicker {
  private:
   unsigned int num_levels_;
   unsigned int curr_level_;
+  unsigned int curr_level_index_;
   unsigned int returned_file_level_;
   unsigned int hit_file_level_;
   int32_t search_left_bound_;
@@ -260,6 +271,7 @@ class FilePicker {
   std::vector<FileMetaData*>* files_;
 #endif
   autovector<LevelFilesBrief>* level_files_brief_;
+  std::vector<std::pair<size_t,size_t>> ordered_level_;
   bool search_ended_;
   bool is_hit_file_last_in_level_;
   LevelFilesBrief* curr_file_level_;
@@ -277,7 +289,8 @@ class FilePicker {
   // Setup local variables to search next level.
   // Returns false if there are no more levels to search.
   bool PrepareNextLevel() {
-    curr_level_++;
+    curr_level_ = GetNextLevel();
+    curr_level_index_++;
     while (curr_level_ < num_levels_) {
       curr_file_level_ = &(*level_files_brief_)[curr_level_];
       if (curr_file_level_->num_files == 0) {
@@ -291,7 +304,8 @@ class FilePicker {
         // the next level
         search_left_bound_ = 0;
         search_right_bound_ = FileIndexer::kLevelMaxIndex;
-        curr_level_++;
+        curr_level_ = GetNextLevel();
+        curr_level_index_++;
         continue;
       }
 
@@ -325,7 +339,8 @@ class FilePicker {
           // need to search all files in the next level.
           search_left_bound_ = 0;
           search_right_bound_ = FileIndexer::kLevelMaxIndex;
-          curr_level_++;
+          curr_level_ = GetNextLevel();
+          curr_level_index_++;
           continue;
         }
       }
@@ -1194,7 +1209,7 @@ void Version::Get(const ReadOptions& read_options, const LookupKey& k,
   FilePicker fp(
       storage_info_.files_, user_key, ikey, &storage_info_.level_files_brief_,
       storage_info_.num_non_empty_levels_, &storage_info_.file_indexer_,
-      user_comparator(), internal_comparator());
+      user_comparator(), internal_comparator(), storage_info_.ordered_level_);
   FdWithKeyRange* f = fp.GetNextFile();
 
   while (f != nullptr) {
@@ -2524,12 +2539,12 @@ uint64_t VersionStorageInfo::MaxBytesForLevel(int level) const {
 
 void VersionStorageInfo::CalculateBaseBytes(const ImmutableCFOptions& ioptions,
                                             const MutableCFOptions& options) {
- //ROCKS_LOG_INFO(ioptions.info_log, "LSM Age:");
- //for (int l = 0; l < num_levels_; l++) {
- //  if (age_.at(l) != 0) {
- //    ROCKS_LOG_INFO(ioptions.info_log, "L%d: %lu", l, age_.at(l));
- //  }
- //}
+  // ROCKS_LOG_INFO(ioptions.info_log, "LSM Age:");
+  // for (int l = 0; l < num_levels_; l++) {
+  //   if (age_.at(l) != 0) {
+  //     ROCKS_LOG_INFO(ioptions.info_log, "L%d: %lu", l, age_.at(l));
+  //   }
+  // }
 
   // Special logic to set number of sorted runs.
   // It is to match the previous behavior when all files are in L0.

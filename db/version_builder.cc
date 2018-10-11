@@ -385,6 +385,7 @@ class VersionBuilder::Rep {
     }
 
     CheckConsistency(vstorage);
+    vstorage->UpdateLevelOrder();
   }
 
   void LoadTableHandlers(InternalStats* internal_stats, int max_threads,
