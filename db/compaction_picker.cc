@@ -1552,7 +1552,8 @@ Compaction* LevelCompactionBuilder::PickCompaction(LogBuffer* log_buffer) {
     auto next_level = vstorage_->ll_to_l_[start_llevel+1];
     assert(next_level);
     output_level_ = next_level;
-    tiered = vstorage_->llevel_max_runs_[start_llevel+1] > 1;
+    //tiered = vstorage_->llevel_max_runs_[start_llevel+1] > 1;
+    tiered = vstorage_->llevel_type_[start_llevel+1] == 'T';
 
     // TODO(myabandeh): remove the log line
     ROCKS_LOG_INFO(ioptions_.info_log, "i=%d tiered=%d start_llevel=%d start_level=%d next_level=%d output_level_=%d", i, tiered, start_llevel, start_level, next_level, output_level_);
@@ -1597,7 +1598,7 @@ Compaction* LevelCompactionBuilder::PickCompaction(LogBuffer* log_buffer) {
     }
     size_t max_gen = 0;
     for (int level = start_level; level < next_level; level++) {
-      bool reserved = false;
+      bool reserved = LevelIsReserved(level);
       if (reserved) {
         auto gen = compaction_picker_->generation(level);
         max_gen = max_gen == 0 ? gen : std::min(max_gen, gen);
