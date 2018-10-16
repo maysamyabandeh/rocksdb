@@ -231,8 +231,10 @@ ColumnFamilyOptions SanitizeOptions(const ImmutableDBOptions& db_options,
       size_t rpl = result.rpl[ll];
       size_t multiplier = result.rpl_multiplier[ll];
       size_t add = rpl * multiplier;
+      char type = result.level_type[ll];
+      assert(type == 'L' || type == 'N' || type == 'T');
       size *= result.fanout[ll];
-      ROCKS_LOG_WARN(db_options.info_log.get(), "LL%d: %zux %9s [L%d:L%d]", ll, rpl, BytesToHumanString(size).c_str(),
+      ROCKS_LOG_WARN(db_options.info_log.get(), "%c%d: %zux %9s [L%d:L%d]", type, ll, rpl, BytesToHumanString(size).c_str(),
                      num_levels, num_levels + add - 1);
       num_levels += add;
     }

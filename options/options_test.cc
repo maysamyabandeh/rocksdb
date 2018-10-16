@@ -78,6 +78,10 @@ TEST_F(OptionsTest, GetOptionsFromMapTest) {
        "0:"
        "3:"
        "2"},
+      {"level_type",
+       "T:"
+       "N:"
+       "L"},
       {"level0_file_num_compaction_trigger", "8"},
       {"level0_slowdown_writes_trigger", "9"},
       {"level0_stop_writes_trigger", "10"},
@@ -196,6 +200,9 @@ TEST_F(OptionsTest, GetOptionsFromMapTest) {
   ASSERT_EQ(new_cf_opt.fanout[0], 0);
   ASSERT_EQ(new_cf_opt.fanout[1], 3);
   ASSERT_EQ(new_cf_opt.fanout[2], 2);
+  ASSERT_EQ(new_cf_opt.level_type[0], 'T');
+  ASSERT_EQ(new_cf_opt.level_type[1], 'N');
+  ASSERT_EQ(new_cf_opt.level_type[2], 'L');
 
   ASSERT_EQ(new_cf_opt.level0_file_num_compaction_trigger, 8);
   ASSERT_EQ(new_cf_opt.level0_slowdown_writes_trigger, 9);

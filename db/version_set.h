@@ -419,6 +419,7 @@ class VersionStorageInfo {
  public:
   std::vector<size_t> llevel_max_runs_;
   std::vector<size_t> llevel_fanout_;
+  std::vector<char> llevel_type_;
   std::vector<size_t> age_;
   // <level, age>
   std::vector<std::pair<size_t,size_t>> ordered_level_;

@@ -379,6 +379,9 @@ struct AdvancedColumnFamilyOptions {
   // by the size of previous layer. L0 and L1 size determined by
   // max_bytes_for_level_base.
   std::vector<size_t> fanout = {0, 1, 2, 2, 2, 2};
+  // The type of each level in adaptive LSM. 'T' is tiered, 'L' is Leveled, and
+  // 'N' is Leveled-N.
+  std::vector<char> level_type = {'T', 'T', 'T', 'T', 'L', 'L'};
 
   // Soft limit on number of level-0 files. We start slowing down writes at this
   // point. A value <0 means that no writing slow down will be triggered by

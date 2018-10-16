@@ -586,6 +586,10 @@ static std::vector<size_t> FLAGS_fanout_v;
 DEFINE_string(fanout, "",
               "A vector that specifies runs fanout in adaptive lsm");
 
+static std::vector<char> FLAGS_level_type_v;
+DEFINE_string(level_type, "",
+              "A vector that specifies level types in adaptive lsm");
+
 DEFINE_int64(target_file_size_base, rocksdb::Options().target_file_size_base,
              "Target file size at level-1");
 
@@ -3370,6 +3374,12 @@ void VerifyDBFromDB(std::string& truth_db_name) {
         exit(1);
       }
       options.fanout = FLAGS_fanout_v;
+      if (FLAGS_num_logical_levels + 1!= FLAGS_level_type_v.size()) {
+        fprintf(stderr, "Insufficient number of level_type specified %zu\n",
+                FLAGS_level_type_v.size());
+        exit(1);
+      }
+      options.level_type = FLAGS_level_type_v;
     }
     options.level0_stop_writes_trigger = FLAGS_level0_stop_writes_trigger;
     options.level0_file_num_compaction_trigger =
@@ -5737,6 +5747,15 @@ int db_bench_tool(int argc, char** argv) {
 #else
         stoi(rpl_multiplier[j]));
 #endif
+  }
+
+  std::vector<std::string> level_type = rocksdb::StringSplit(
+      FLAGS_level_type, ',');
+  for (size_t j = 0; j < level_type.size(); j++) {
+    assert(!level_type[j].empty());
+    char type = level_type[j][0];
+    assert(j == 0 || type == 'T' || type == 'N' || type == 'L');
+    FLAGS_level_type_v.push_back(type);
   }
 
   std::vector<std::string> logical_fanout = rocksdb::StringSplit(

@@ -2569,6 +2569,7 @@ void VersionStorageInfo::CalculateBaseBytes(const ImmutableCFOptions& ioptions,
   assert(num_llevels);
   llevel_max_runs_.resize(num_llevels+1); // there is no logical l0
   llevel_fanout_.resize(num_llevels+1);
+  llevel_type_.resize(num_llevels+1);
   l_to_ll_.resize(ioptions.num_levels);
   ll_to_l_.resize(num_llevels+1);
   ll_to_l_[0] = 0;
@@ -2579,6 +2580,7 @@ void VersionStorageInfo::CalculateBaseBytes(const ImmutableCFOptions& ioptions,
     for (size_t i = 1; i <= num_llevels; ++i) {
       llevel_max_runs_[i] = ioptions.rpl[i];
       llevel_fanout_[i] = ioptions.fanout[i];
+      llevel_type_[i] = ioptions.level_type[i];
     }
 
     size_t r = 0;
@@ -2595,7 +2597,8 @@ void VersionStorageInfo::CalculateBaseBytes(const ImmutableCFOptions& ioptions,
       bool new_ll = false;
       if (ll != 0) {
         size_t rpl = llevel_max_runs_[ll];
-        if (rpl != 1) { // tiered
+        char type = llevel_type_[ll];
+        if (type != 'L') { // tiered or Leveled-N
           // multiply rpl to reserve space for lazy compaction
           rpl = ioptions.rpl_multiplier[ll] * rpl;
         }

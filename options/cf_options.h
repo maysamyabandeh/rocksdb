@@ -106,6 +106,7 @@ struct ImmutableCFOptions {
   std::vector<size_t> rpl;
   std::vector<size_t> rpl_multiplier;
   std::vector<size_t> fanout;
+  std::vector<char> level_type;
 
   bool optimize_filters_for_hits;
 

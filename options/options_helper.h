@@ -54,6 +54,7 @@ enum class OptionType {
   kSizeT,
   kString,
   kDouble,
+  kChar,
   kCompactionStyle,
   kCompactionPri,
   kSliceTransform,
