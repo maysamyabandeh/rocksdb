@@ -108,7 +108,8 @@ class VersionStorageInfo {
   void UpdateNumNonEmptyLevels();
 
   void GenerateFileIndexer() {
-    file_indexer_.UpdateIndex(&arena_, num_non_empty_levels_, files_, ordered_level_);
+    //file_indexer_.UpdateIndex(&arena_, num_non_empty_levels_, files_, ordered_level_);
+    file_indexer_.UpdateIndex(&arena_, ordered_level_.size(), files_, ordered_level_);
   }
 
   // Update the accumulated stats from a file-meta.
