@@ -136,7 +136,7 @@ std::vector<std::pair<size_t,size_t>>& ordered_level);
       std::function<int(const FileMetaData*, const FileMetaData*)> cmp_op,
       std::function<void(IndexUnit*, int32_t)> set_index);
 
-  autovector<IndexLevel> next_level_index_;
+  std::vector<IndexLevel> next_level_index_;
   int32_t* level_rb_;
 };
 

@@ -1698,7 +1698,9 @@ void VersionStorageInfo::ComputeCompactionScore(
     }
     compaction_level_[level] = level;
     compaction_score_[level] = score;
-    if (!assigned) {
+    if (llevel_type_[ll] == 'N' && ll_to_l_[ll] == level && score > 1) {
+      compaction_l_score_[ll] += score;
+    } else if (!assigned) {
       compaction_l_score_[ll] = score;
     }
   }
@@ -2598,7 +2600,7 @@ void VersionStorageInfo::CalculateBaseBytes(const ImmutableCFOptions& ioptions,
       if (ll != 0) {
         size_t rpl = llevel_max_runs_[ll];
         char type = llevel_type_[ll];
-        if (type != 'L') { // tiered or Leveled-N
+        if (type == 'T') { // tiered
           // multiply rpl to reserve space for lazy compaction
           rpl = ioptions.rpl_multiplier[ll] * rpl;
         }
@@ -2607,11 +2609,16 @@ void VersionStorageInfo::CalculateBaseBytes(const ImmutableCFOptions& ioptions,
           r = 0;
           ll++;
           ll_to_l_[ll] = i;
+          type = llevel_type_[ll];
+          rpl = llevel_max_runs_[ll];
+          if (type == 'T') {  // tiered
+            rpl = ioptions.rpl_multiplier[ll] * rpl;
+          }
         }
-        if (rpl - r > llevel_max_runs_[ll] && llevel_max_runs_[ll] != 1) {
+        if (rpl - r > llevel_max_runs_[ll] && type == 'T') {
           reserved = true;
         }
-        if (rpl - r == llevel_max_runs_[ll] || llevel_max_runs_[ll] == 1) {
+        if (rpl - r == llevel_max_runs_[ll] || type == 'L') {
           new_ll = ll > 1;
         }
       }

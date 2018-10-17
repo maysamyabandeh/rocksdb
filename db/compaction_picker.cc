@@ -1424,6 +1424,60 @@ bool LevelCompactionBuilder::CompactionInProgress(int level) {
 Compaction* LevelCompactionBuilder::PickCompaction(LogBuffer* log_buffer) {
   (void)log_buffer;
   compaction_inputs_.clear();
+
+  // check for trivial moves for Leveled-N
+  compaction_inputs_.clear();
+  for (size_t i = 0; i <= vstorage_->llevel_type_.size(); i++) {
+    auto score = vstorage_->compaction_l_score_[i];
+    size_t ll = vstorage_->compaction_l_level_[i];
+    if (vstorage_->llevel_type_[ll] != 'N') {
+      continue;
+    }
+    int start_level = vstorage_->ll_to_l_[ll];
+    int next_level = vstorage_->ll_to_l_[ll+1];
+    if (score < 1) {  // the level is not ready for compaction
+        ROCKS_LOG_INFO(ioptions_.info_log, "Leveled-N L%d score %f too low", start_level, score);
+      continue;
+    }
+    bool being_compacted = false;
+    for (auto* f : vstorage_->files_[start_level]) {
+      if (f->being_compacted) {
+        being_compacted = true;
+        break;
+      }
+    }
+    if (being_compacted) {
+        ROCKS_LOG_INFO(ioptions_.info_log, "Leveled-N L%d is being compacted", start_level);
+      continue;
+    }
+    output_level_ = 0;
+    for (int l = start_level + 1; l < next_level; l++) {
+      if (LevelIsEmpty(l)) {
+        output_level_ = l;
+        break;
+      } else {
+        ROCKS_LOG_INFO(ioptions_.info_log, "Leveled-N L%d is full", l);
+      }
+    }
+    if (output_level_) {
+      ROCKS_LOG_INFO(ioptions_.info_log, "Leveled-N trivial move from %d to %d",
+                     start_level, output_level_);
+      auto level_gen = compaction_picker_->generation(start_level);
+      output_gen_ = level_gen;
+      CompactionInputFiles level_inputs;
+      level_inputs.level = start_level;
+      level_inputs.files = vstorage_->files_[start_level];
+      compaction_inputs_.push_back(level_inputs);
+      break;
+    }
+  }
+  if (!compaction_inputs_.empty()) {
+    assert(output_level_);
+    Compaction* c = GetCompaction();
+    c->set_is_trivial_move(true);
+    return c;
+  }
+
     // Check for trivial moves
   if (0){
   int next_level = 0;
@@ -1668,7 +1722,9 @@ Compaction* LevelCompactionBuilder::PickCompaction(LogBuffer* log_buffer) {
     return nullptr;
   }
   {
+  assert(compaction_inputs_.size() != 1 || !tiered);
   bool trivial_move = !tiered && compaction_inputs_.size() == 1;
+  assert(!trivial_move); // I do not expect it here
   Compaction* c = GetCompaction();
   if (trivial_move) {
     c->set_is_trivial_move(true);
