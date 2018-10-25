@@ -31,7 +31,7 @@ ipid=$!
 kill $vpid
 kill $ipid
 du -hs $dbdir > dw.$sfx
-nr=`grep found ow.$sfx | awk '{print $(NF-1)}'`
+nr=`grep fillrandom ow.$sfx | awk '{print $(NF)}'`
 
 : '
 vmstat 1 >& vr.$sfx &

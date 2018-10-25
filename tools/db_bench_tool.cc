@@ -1788,12 +1788,12 @@ class Stats {
     double elapsed = (finish_ - start_) * 1e-6;
     double throughput = (double)done_/elapsed;
 
-    fprintf(stdout, "%-12s : %11.3f micros/op %ld ops/sec;%s%s\n",
+    fprintf(stdout, "%-12s : %11.3f micros/op %ld ops/sec;%s%s ops %lu\n",
             name.ToString().c_str(),
             elapsed * 1e6 / done_,
             (long)throughput,
             (extra.empty() ? "" : " "),
-            extra.c_str());
+            extra.c_str(), done_);
     if (FLAGS_histogram) {
       for (auto it = hist_.begin(); it != hist_.end(); ++it) {
         fprintf(stdout, "Microseconds per %s:\n%s\n",
