@@ -1031,7 +1031,7 @@ class VersionSet {
       bool* have_log_number, uint64_t* log_number, bool* have_prev_log_number,
       uint64_t* previous_log_number, bool* have_next_file, uint64_t* next_file,
       bool* have_last_sequence, SequenceNumber* last_sequence,
-      uint64_t* min_log_number_to_keep, uint32_t* max_column_family);
+      uint64_t* min_log_number_to_keep, uint32_t* max_column_family, std::map<uint32_t,std::map<int, uint32_t>>* level_age);
 
   Status ProcessManifestWrites(std::deque<ManifestWriter>& writers,
                                InstrumentedMutex* mu, Directory* db_directory,
@@ -1040,6 +1040,7 @@ class VersionSet {
 
   std::unique_ptr<ColumnFamilySet> column_family_set_;
 
+  std::map<uint32_t, std::map<int, uint32_t>> level_age_;
   Env* const env_;
   const std::string dbname_;
   const ImmutableDBOptions* const db_options_;

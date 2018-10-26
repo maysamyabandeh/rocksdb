@@ -3384,7 +3384,7 @@ Status VersionSet::ApplyOneVersionEdit(
     bool* have_prev_log_number, uint64_t* previous_log_number,
     bool* have_next_file, uint64_t* next_file, bool* have_last_sequence,
     SequenceNumber* last_sequence, uint64_t* min_log_number_to_keep,
-    uint32_t* max_column_family) {
+    uint32_t* max_column_family, std::map<uint32_t,std::map<int, uint32_t>>* level_age) {
   // Not found means that user didn't supply that column
   // family option AND we encountered column family add
   // record. Once we encounter column family drop record,
@@ -3498,6 +3498,10 @@ Status VersionSet::ApplyOneVersionEdit(
   if (edit.has_last_sequence_) {
     *last_sequence = edit.last_sequence_;
     *have_last_sequence = true;
+  }
+  
+  if (edit.age_update_ != AgeUpdate(0,0)) {
+    (*level_age)[edit.column_family_][edit.age_update_.first] = edit.age_update_.second;
   }
   return Status::OK();
 }
@@ -3616,7 +3620,7 @@ Status VersionSet::Recover(
                 &have_log_number, &log_number, &have_prev_log_number,
                 &previous_log_number, &have_next_file, &next_file,
                 &have_last_sequence, &last_sequence, &min_log_number_to_keep,
-                &max_column_family);
+                &max_column_family, &level_age_);
             if (!s.ok()) {
               break;
             }
@@ -3633,7 +3637,7 @@ Status VersionSet::Recover(
             &have_log_number, &log_number, &have_prev_log_number,
             &previous_log_number, &have_next_file, &next_file,
             &have_last_sequence, &last_sequence, &min_log_number_to_keep,
-            &max_column_family);
+            &max_column_family, &level_age_);
       }
       if (!s.ok()) {
         break;
@@ -3756,6 +3760,16 @@ Status VersionSet::Recover(
     delete builder.second;
   }
 
+  for (auto cfd : *GetColumnFamilySet()) {
+    auto picker = cfd->compaction_picker();
+    auto cfid = cfd->GetID();
+    auto levelgen = level_age_[cfid];
+    for (auto it = levelgen.begin(); it != levelgen.end(); it++) {
+      auto level = it->first;
+      auto age = it->second;
+      picker->SetLevelGeneration(level, age);
+    }
+  }
   return s;
 }
 
@@ -4042,6 +4056,10 @@ Status VersionSet::DumpManifest(Options& options, std::string& dscname,
       if (edit.has_last_sequence_) {
         last_sequence = edit.last_sequence_;
         have_last_sequence = true;
+      }
+
+      if (edit.age_update_ != AgeUpdate(0,0)) {
+        level_age_[edit.column_family_][edit.age_update_.first] = edit.age_update_.second;
       }
 
       if (edit.has_max_column_family_) {

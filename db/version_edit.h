@@ -20,6 +20,7 @@
 
 namespace rocksdb {
 
+  typedef std::pair<int, size_t> AgeUpdate;
 class VersionSet;
 
 const uint64_t kFileNumberMask = 0x3FFFFFFFFFFFFFFF;

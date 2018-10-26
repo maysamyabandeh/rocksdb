@@ -939,6 +939,10 @@ void DumpManifestFile(std::string file, bool verbose, bool hex, bool json) {
   // SanitizeOptions(), we need to initialize it manually.
   options.db_paths.emplace_back("dummy", 0);
   options.num_levels = 64;
+  options.num_logical_levels = 1;
+  options.rpl = {0, 1};
+  options.rpl_multiplier = {1, 1};
+  options.level_type = {'L', 'L'};
   WriteController wc(options.delayed_write_rate);
   WriteBufferManager wb(options.db_write_buffer_size);
   ImmutableDBOptions immutable_db_options(options);
