@@ -3764,11 +3764,14 @@ Status VersionSet::Recover(
     auto picker = cfd->compaction_picker();
     auto cfid = cfd->GetID();
     auto levelgen = level_age_[cfid];
+    size_t max_age = 0;
     for (auto it = levelgen.begin(); it != levelgen.end(); it++) {
       auto level = it->first;
       auto age = it->second;
+      max_age = std::max(max_age, (size_t)age);
       picker->SetLevelGeneration(level, age);
     }
+    picker->InitAge(max_age);
   }
   return s;
 }

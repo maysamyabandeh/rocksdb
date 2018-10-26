@@ -1593,6 +1593,7 @@ Compaction* LevelCompactionBuilder::PickCompaction(LogBuffer* log_buffer) {
   }
   }
 
+  assert(compaction_inputs_.empty());
   bool tiered = true;
   for (int i = 0; i < compaction_picker_->NumberLevels() - 1; i++) {
     start_level_score_ = vstorage_->compaction_l_score_[i];
@@ -1603,6 +1604,7 @@ Compaction* LevelCompactionBuilder::PickCompaction(LogBuffer* log_buffer) {
     }
     auto start_llevel = vstorage_->compaction_l_level_[i];
     auto start_level = vstorage_->ll_to_l_[start_llevel];
+    assert(start_level); // no longer no L0
     auto next_level = vstorage_->ll_to_l_[start_llevel+1];
     assert(next_level);
     output_level_ = next_level;
@@ -1724,7 +1726,9 @@ Compaction* LevelCompactionBuilder::PickCompaction(LogBuffer* log_buffer) {
   {
   assert(compaction_inputs_.size() != 1 || !tiered);
   bool trivial_move = !tiered && compaction_inputs_.size() == 1;
-  assert(!trivial_move); // I do not expect it here
+  if (trivial_move) {
+    ROCKS_LOG_WARN(ioptions_.info_log, "Unexpected trivial move from %d to %d It is OK if rare", compaction_inputs_[0].level, output_level_);
+  }
   Compaction* c = GetCompaction();
   if (trivial_move) {
     c->set_is_trivial_move(true);

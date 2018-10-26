@@ -40,6 +40,7 @@ class CompactionPicker {
   virtual void ReleaseLL1(int, size_t) {};
   virtual size_t IncGen() {return 0;}
   virtual void SetLevelGeneration(int, size_t) {};
+  virtual void InitAge(size_t) {assert(0);}
   virtual size_t generation(int) {return 0;}
 
   // Pick level and inputs for a new compaction.
@@ -250,6 +251,9 @@ class LevelCompactionPicker : public CompactionPicker {
   };
   virtual size_t IncGen() {
     return ++curr_gen_;
+  }
+  virtual void InitAge(size_t age) {
+    curr_gen_ = age+1;
   }
   virtual void ReleaseLL1(int level, size_t gen) {
     assert(reserved_ll1s.find(level) != reserved_ll1s.end());

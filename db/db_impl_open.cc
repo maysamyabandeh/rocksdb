@@ -966,6 +966,34 @@ Status DBImpl::WriteLevel0TableForRecovery(int job_id, ColumnFamilyData* cfd,
   // Note that if file_size is zero, the file has been deleted and
   // should not be added to the manifest.
   int level = 0;
+  //kill L0
+  {
+    auto vstorage = cfd->current()->storage_info();
+    const int llevel = 1;
+    const int start_level = vstorage->ll_to_l_[llevel];
+    const int next_level = vstorage->ll_to_l_[llevel + 1];
+
+    bool empty = false;
+    level = next_level - 1;
+    for (; !empty && level >= start_level; level--) {
+      empty = vstorage->files_[level].size() == 0;
+      empty = empty && !cfd->compaction_picker()->IsReserveLL1(level);
+      if (empty) {
+        break;
+      }
+    }
+    assert(level);
+    assert(empty);
+    cfd->compaction_picker()->ReserveLL1(level);
+    auto output_age = cfd->compaction_picker()->IncGen();
+    ROCKS_LOG_INFO(immutable_db_options_.info_log,
+                   "[%s] [RECOVERY] Level-1 (to %d age: %zu) flush table #%" PRIu64,
+                   cfd->GetName().c_str(),
+                   level, output_age,
+                   meta.fd.GetNumber());
+    assert(output_age);
+    edit->UpdateAge(level, output_age);
+  }
   if (s.ok() && meta.fd.GetFileSize() > 0) {
     edit->AddFile(level, meta.fd.GetNumber(), meta.fd.GetPathId(),
                   meta.fd.GetFileSize(), meta.smallest, meta.largest,
