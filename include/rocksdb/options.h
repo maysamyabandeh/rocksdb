@@ -275,10 +275,10 @@ struct ColumnFamilyOptions : public AdvancedColumnFamilyOptions {
   // this option helps reducing the cpu usage of long-running compactions. The
   // feature is disabled when max_subcompactions is greater than one.
   //
-  // Default: 0.5s
+  // Default: 0 i.e., disabled
   //
   // Dynamically changeable through SetOptions() API
-  uint64_t snap_refresh_nanos = 500 * 1000 * 1000;  // 0.5s
+  uint64_t snap_refresh_nanos = 0;
 
   // Disable automatic compactions. Manual compactions can still
   // be issued on this column family
