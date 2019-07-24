@@ -211,6 +211,7 @@ class Block {
 template <class TValue>
 class BlockIter : public InternalIteratorBase<TValue> {
  public:
+   static size_t bs_cmp_;
   void InitializeBase(const Comparator* comparator, const char* data,
                       uint32_t restarts, uint32_t num_restarts,
                       SequenceNumber global_seqno, bool block_contents_pinned) {
@@ -325,6 +326,8 @@ class BlockIter : public InternalIteratorBase<TValue> {
 
 class DataBlockIter final : public BlockIter<Slice> {
  public:
+   static size_t data_bs_cmp_;
+   static size_t data_ss_cmp_;
   DataBlockIter()
       : BlockIter(), read_amp_bitmap_(nullptr), last_bitmap_offset_(0) {}
   DataBlockIter(const Comparator* comparator, const Comparator* user_comparator,
@@ -417,6 +420,9 @@ class DataBlockIter final : public BlockIter<Slice> {
 
 class IndexBlockIter final : public BlockIter<BlockHandle> {
  public:
+   static size_t index_bs_cmp_;
+   static size_t index_ss_cmp_;
+   static size_t next_call_;
   IndexBlockIter() : BlockIter(), prefix_index_(nullptr) {}
 
   virtual Slice key() const override {

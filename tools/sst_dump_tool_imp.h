@@ -40,6 +40,7 @@ class SstFileReader {
           compression_types);
 
   void Rewrite();
+  void SeekTest();
 
  private:
   // Get the TableReader implementation for the sst file

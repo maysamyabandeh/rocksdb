@@ -99,6 +99,7 @@ void DataBlockIter::Next() {
 }
 
 void IndexBlockIter::Next() {
+  next_call_ ++;
   assert(Valid());
   ParseNextIndexKey();
 }
@@ -200,15 +201,26 @@ void DataBlockIter::Prev() {
   prev_entries_idx_ = static_cast<int32_t>(prev_entries_.size()) - 1;
 }
 
+template<>
+size_t BlockIter<BlockHandle>::bs_cmp_ = 0;
+template<>
+size_t BlockIter<Slice>::bs_cmp_ = 0;
+size_t IndexBlockIter::index_bs_cmp_ = 0;
+size_t IndexBlockIter::index_ss_cmp_ = 0;
+size_t DataBlockIter::data_bs_cmp_ = 0;
+size_t DataBlockIter::data_ss_cmp_ = 0;
+size_t IndexBlockIter::next_call_ = 0;
 void DataBlockIter::Seek(const Slice& target) {
   Slice seek_key = target;
   PERF_TIMER_GUARD(block_seek_nanos);
   if (data_ == nullptr) {  // Not init yet
     return;
   }
+  bs_cmp_ = 0;
   uint32_t index = 0;
   bool ok = BinarySeek<DecodeKey>(seek_key, 0, num_restarts_ - 1, &index,
                                   comparator_);
+  data_bs_cmp_ = bs_cmp_;
 
   if (!ok) {
     return;
@@ -216,7 +228,9 @@ void DataBlockIter::Seek(const Slice& target) {
   SeekToRestartPoint(index);
   // Linear search (within restart block) for first key >= target
 
+  data_ss_cmp_ = 0;
   while (true) {
+    data_ss_cmp_++;
     if (!ParseNextDataKey() || Compare(key_, seek_key) >= 0) {
       return;
     }
@@ -234,6 +248,7 @@ void IndexBlockIter::Seek(const Slice& target) {
   }
   uint32_t index = 0;
   bool ok = false;
+  bs_cmp_ = 0;
   if (prefix_index_) {
     ok = PrefixSeek(target, &index);
   } else if (value_delta_encoded_) {
@@ -243,6 +258,7 @@ void IndexBlockIter::Seek(const Slice& target) {
     ok = BinarySeek<DecodeKey>(seek_key, 0, num_restarts_ - 1, &index,
                                active_comparator_);
   }
+  index_bs_cmp_ = bs_cmp_;
 
   if (!ok) {
     return;
@@ -250,7 +266,9 @@ void IndexBlockIter::Seek(const Slice& target) {
   SeekToRestartPoint(index);
   // Linear search (within restart block) for first key >= target
 
+  index_ss_cmp_ = 0;
   while (true) {
+    index_ss_cmp_++;
     if (!ParseNextIndexKey() || Compare(key_, seek_key) >= 0) {
       return;
     }
@@ -498,6 +516,7 @@ bool BlockIter<TValue>::BinarySeek(const Slice& target, uint32_t left,
       return false;
     }
     Slice mid_key(key_ptr, non_shared);
+    bs_cmp_++;
     int cmp = comp->Compare(mid_key, target);
     if (cmp < 0) {
       // Key at "mid" is smaller than "target". Therefore all

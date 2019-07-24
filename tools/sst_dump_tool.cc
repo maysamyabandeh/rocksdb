@@ -158,6 +158,141 @@ Status SstFileReader::DumpTable(const std::string& out_filename) {
   return s;
 }
 
+class Trie {
+  public:
+    Trie(std::vector<std::string>& keys) : keys_(keys) {}
+    ~Trie() {
+      delete left_;
+      delete right_;
+    }
+    void Construct(size_t offset, size_t start, size_t end) {
+      //printf("offset %zu start %zu end %zu\n", offset, start, end);
+      start_ = start;
+      end_ = end;
+      offset_ = offset;
+      if (start_ + 1 == end_) {
+        right_i_ = end_;
+        return;
+      }
+      size_t i;
+      size_t byte_offset = offset / 8;
+      size_t bit_offset = offset % 8;
+      for (i = start; i < end; i++) {
+        if (keys_[i].size() <= byte_offset) {
+          continue;
+        }
+       //for (size_t k =0; k < keys_[i].size(); k++) {
+       //  printf("%zu-", (size_t)(unsigned char)keys_[i][k]);
+       //}
+       //printf("\n");
+        auto byte_at = (unsigned char)keys_[i][byte_offset];
+       // printf("byte at byte_offset %zu is %zu\n", byte_offset, (size_t) byte_at);
+        if ((byte_at >> (7 - bit_offset)) & (unsigned char) 0x1) {
+          break;
+        }
+      }
+      right_i_ = i;
+      //printf("right is %zu between %zu and %zu\n", right_i_, start_, end_);
+      if (start_ != right_i_) {
+        left_ = new Trie(keys_);
+        left_->Construct(offset + 1, start_, right_i_);
+      }
+      if (right_i_ != end_) {
+        right_ = new Trie(keys_);
+        right_->Construct(offset + 1, right_i_, end_);
+      }
+    }
+    void RepresentTree() {
+      printf("%s %zu\n", std::string(offset_, '-').c_str(), end_ - start_);
+      if (left_) {
+        left_->RepresentTree();
+      }
+      if (right_) {
+        right_->RepresentTree();
+      }
+    }
+    void RepresentLeftSize() {
+      printf("%zu\n", right_i_ - start_);
+      if (left_) {
+        left_->RepresentLeftSize();
+      }
+      if (right_) {
+        right_->RepresentLeftSize();
+      }
+    }
+
+    size_t NumberCountLeftSize() {
+      size_t encode_size = 0;
+      encode_size++;
+      if (left_) {
+        encode_size += left_->NumberCountLeftSize();
+      }
+      if (right_) {
+        encode_size += right_->NumberCountLeftSize();
+      }
+      return encode_size;
+    }
+
+    size_t EncodeLeftSize(std::string* buf) {
+      PutVarint32(buf, right_i_ - start_);
+      if (left_) {
+        left_->EncodeLeftSize(buf);
+      }
+      if (right_) {
+        right_->EncodeLeftSize(buf);
+      }
+      return buf->size();
+    }
+
+    size_t EncodeSiltStyle() {
+      std::string buf;
+      auto left_size = right_i_ - start_;
+      auto right_size = end_ - right_i_;
+      auto left_bits = 0;
+      const size_t special_bits = 2;
+      const size_t reserved_bits = 5;
+      if (left_size >= special_bits) {
+        if ((left_size - special_bits < (1 << (reserved_bits)))) {
+          left_bits += special_bits + reserved_bits + 1;
+        } else {
+        PutVarint32(&buf, left_size - special_bits - (1 << (reserved_bits)));
+        left_bits = buf.size() * 8 + special_bits + 1;
+        }
+      } else {
+        left_bits = left_size + 1;
+       //switch (left_size) {
+       //  case 0: left_bits = 1; break;
+       //  case 1: left_bits = 2; break;
+       //  case 2: left_bits = 3; break;
+       //  case 3: left_bits = 4; break;
+       //  default: assert(0);
+       //}
+      }
+      assert(!left_ || left_size > 0);
+      assert(!right_ || right_size > 0);
+      if (left_size > 1) {
+        left_bits += left_->EncodeSiltStyle();
+      }
+      if (right_size > 1) {
+        left_bits += right_->EncodeSiltStyle();
+      }
+      return left_bits;
+    }
+
+    void Represent() {
+      //RepresentTree();
+      RepresentLeftSize();
+    }
+  private:
+    size_t start_;
+    size_t end_;
+    size_t right_i_;
+    size_t offset_;
+    Trie* left_ = nullptr;
+    Trie* right_ = nullptr;
+    std::vector<std::string>& keys_;
+};
+
 void SstFileReader::Rewrite() {
   // TODO(myabandeh): set the options based on the current SST settings
   CompressionOptions compress_opt;
@@ -205,6 +340,65 @@ void SstFileReader::Rewrite() {
     fputs(s.ToString().c_str(), stderr);
     exit(1);
   }
+}
+
+void SstFileReader::SeekTest() {
+  unique_ptr<InternalIterator> iter(table_reader_->NewIterator(ReadOptions(), moptions_.prefix_extractor.get()));
+  unique_ptr<InternalIterator> seek_iter(table_reader_->NewIterator(ReadOptions(), moptions_.prefix_extractor.get()));
+  std::vector<std::string> keys;
+  std::vector<std::string> keys16;
+  size_t index_bs_sum = 0;
+  size_t index_ss_sum = 0;
+  size_t index_cnt = 0;
+  size_t data_bs_sum = 0;
+  size_t data_ss_sum = 0;
+  size_t data_cnt = 0;
+  size_t trie_cnt = 0;
+  size_t trie_size = 0;
+  size_t trie16_size = 0;
+  size_t index_next_call = 0;
+  for (iter->SeekToFirst(); iter->Valid(); iter->Next()) {
+    if (!iter->status().ok()) {
+      fputs(iter->status().ToString().c_str(), stderr);
+      exit(1);
+    }
+    keys.push_back(iter->key().ToString());
+    seek_iter->Seek(iter->key());
+    index_bs_sum += IndexBlockIter::index_bs_cmp_;
+    index_ss_sum += IndexBlockIter::index_ss_cmp_;
+    data_bs_sum += DataBlockIter::data_bs_cmp_;
+    data_ss_sum += DataBlockIter::data_ss_cmp_;
+    index_cnt++;
+    data_cnt++;
+    if (DataBlockIter::data_ss_cmp_ == 1) { // start of the restart block
+      keys16.push_back(iter->key().ToString());
+    }
+    //printf("seektest index %zu %zu data %zu %zu\n", IndexBlockIter::index_bs_cmp_, IndexBlockIter::index_ss_cmp_, DataBlockIter::data_bs_cmp_, DataBlockIter::data_ss_cmp_);
+    if (IndexBlockIter::next_call_ != index_next_call) {
+      // it is a new block
+      index_next_call = IndexBlockIter::next_call_;
+      trie_cnt++;
+
+      {
+      Trie tree(keys);
+      tree.Construct(0, 0, keys.size());
+      // tree.Represent();
+      //printf("Encode count = %zu size = %zu\n", tree.NumberCountLeftSize(), tree.EncodeLeftSize(&buf));
+      trie_size += tree.EncodeSiltStyle() / 8;
+      keys.clear();
+      }
+
+      // also do it for keys of restart block
+      {
+      Trie tree(keys16);
+      tree.Construct(0, 0, keys16.size());
+      trie16_size += tree.EncodeSiltStyle() / 8;
+      keys16.clear();
+      }
+    }
+  }
+  printf("seektest index %zu %zu data %zu %zu\n", index_bs_sum/index_cnt, index_ss_sum/index_cnt, data_bs_sum/data_cnt, data_ss_sum/data_cnt);
+  printf("trie size %zu 16size %zu\n", trie_size / trie_cnt, trie16_size / trie_cnt);
 }
 
 uint64_t SstFileReader::CalculateCompressedTableSize(
@@ -339,95 +533,6 @@ Status SstFileReader::SetOldTableOptions() {
 
   return Status::OK();
 }
-
-class Trie {
-  public:
-    Trie(std::vector<std::string>& keys) : keys_(keys) {}
-    void Construct(size_t offset, size_t start, size_t end) {
-      start_ = start;
-      end_ = end;
-      offset_ = offset;
-      if (start_ + 1 == end_) {
-        right_i_ = end_;
-        return;
-      }
-      size_t i;
-      size_t byte_offset = offset / 8;
-      size_t bit_offset = offset % 8;
-      for (i = start; i < end; i++) {
-        if (keys_[i].size() <= byte_offset) {
-          continue;
-        }
-        auto byte_at = (unsigned char)keys_[i][byte_offset];
-        if ((byte_at >> (7 - bit_offset)) & (unsigned char) 0x1) {
-          break;
-        }
-      }
-      right_i_ = i;
-      if (start_ != right_i_) {
-        left_ = new Trie(keys_);
-        left_->Construct(offset + 1, start_, right_i_);
-      }
-      if (right_i_ != end_) {
-        right_ = new Trie(keys_);
-        right_->Construct(offset + 1, right_i_, end_);
-      }
-    }
-    void RepresentTree() {
-      printf("%s %zu\n", std::string(offset_, '-').c_str(), end_ - start_);
-      if (left_) {
-        left_->RepresentTree();
-      }
-      if (right_) {
-        right_->RepresentTree();
-      }
-    }
-    void RepresentLeftSize() {
-      printf("%zu\n", right_i_ - start_);
-      if (left_) {
-        left_->RepresentLeftSize();
-      }
-      if (right_) {
-        right_->RepresentLeftSize();
-      }
-    }
-
-    size_t NumberCountLeftSize() {
-      size_t encode_size = 0;
-      encode_size++;
-      if (left_) {
-        encode_size += left_->NumberCountLeftSize();
-      }
-      if (right_) {
-        encode_size += right_->NumberCountLeftSize();
-      }
-      return encode_size;
-    }
-
-    size_t EncodeLeftSize(std::string* buf) {
-      PutVarint32(buf, right_i_ - start_);
-      if (left_) {
-        left_->EncodeLeftSize(buf);
-      }
-      if (right_) {
-        right_->EncodeLeftSize(buf);
-      }
-      return buf->size();
-    }
-
-    void Represent() {
-      //RepresentTree();
-      RepresentLeftSize();
-    }
-  private:
-    size_t start_;
-    size_t end_;
-    size_t right_i_;
-    size_t offset_;
-    Trie* left_ = nullptr;
-    Trie* right_ = nullptr;
-    std::vector<std::string> keys_;
-};
 
 Status SstFileReader::ReadSequential(bool print_kv, uint64_t read_num,
                                      bool has_from, const std::string& from_key,
@@ -768,6 +873,10 @@ int SSTDumpTool::Run(int argc, char** argv) {
 
     if (command == "rewrite") {
       reader.Rewrite();
+    }
+
+    if (command == "seek") {
+      reader.SeekTest();
     }
 
     if (command == "verify") {
