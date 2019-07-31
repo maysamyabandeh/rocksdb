@@ -129,6 +129,20 @@ inline uint32_t DecodeFixed32(const char* ptr) {
         | (static_cast<uint32_t>(static_cast<unsigned char>(ptr[3])) << 24));
   }
 }
+inline uint32_t DecodeFixed32LE(const char* ptr) {
+  assert(port::kLittleEndian);
+    // Load the raw bytes
+    uint32_t result;
+    memcpy(&result, ptr, sizeof(result));  // gcc optimizes this to a plain load
+    return result;
+}
+inline uint32_t DecodeFixed32BE(const char* ptr) {
+  assert(port::kLittleEndian);
+    return ((static_cast<uint32_t>(static_cast<unsigned char>(ptr[0])) << 24)
+        | (static_cast<uint32_t>(static_cast<unsigned char>(ptr[1])) << 16)
+        | (static_cast<uint32_t>(static_cast<unsigned char>(ptr[2])) << 8)
+        | (static_cast<uint32_t>(static_cast<unsigned char>(ptr[3]))));
+}
 
 inline uint64_t DecodeFixed64(const char* ptr) {
   if (port::kLittleEndian) {
@@ -141,6 +155,17 @@ inline uint64_t DecodeFixed64(const char* ptr) {
     uint64_t hi = DecodeFixed32(ptr + 4);
     return (hi << 32) | lo;
   }
+}
+inline uint64_t DecodeFixed64LE(const char* ptr) {
+    // Load the raw bytes
+    uint64_t result;
+    memcpy(&result, ptr, sizeof(result));  // gcc optimizes this to a plain load
+    return result;
+}
+inline uint64_t DecodeFixed64BE(const char* ptr) {
+    uint64_t hi = DecodeFixed32BE(ptr);
+    uint64_t lo = DecodeFixed32BE(ptr + 4);
+    return (hi << 32) | lo;
 }
 
 // Internal routine for use by fallback path of GetVarint32Ptr

@@ -219,7 +219,7 @@ void DataBlockIter::Seek(const Slice& target) {
   bs_cmp_ = 0;
   uint32_t index = 0;
   bool ok = BinarySeek<DecodeKey>(seek_key, 0, num_restarts_ - 1, &index,
-                                  comparator_);
+                                  comparator_, false);
   data_bs_cmp_ = bs_cmp_;
 
   if (!ok) {
@@ -253,10 +253,10 @@ void IndexBlockIter::Seek(const Slice& target) {
     ok = PrefixSeek(target, &index);
   } else if (value_delta_encoded_) {
     ok = BinarySeek<DecodeKeyV4>(seek_key, 0, num_restarts_ - 1, &index,
-                                 active_comparator_);
+                                 active_comparator_, true);
   } else {
     ok = BinarySeek<DecodeKey>(seek_key, 0, num_restarts_ - 1, &index,
-                               active_comparator_);
+                               active_comparator_, true);
   }
   index_bs_cmp_ = bs_cmp_;
 
@@ -283,7 +283,7 @@ void DataBlockIter::SeekForPrev(const Slice& target) {
   }
   uint32_t index = 0;
   bool ok = BinarySeek<DecodeKey>(seek_key, 0, num_restarts_ - 1, &index,
-                                  comparator_);
+                                  comparator_, false);
 
   if (!ok) {
     return;
@@ -502,11 +502,83 @@ template <class TValue>
 template <typename DecodeKeyFunc>
 bool BlockIter<TValue>::BinarySeek(const Slice& target, uint32_t left,
                                    uint32_t right, uint32_t* index,
-                                   const Comparator* comp) {
+                                   const Comparator* comp, bool isindex) {
   assert(left <= right);
 
+  uint64_t target_v = 0;
+  if (isindex) {
+    ParsedInternalKey ikey;
+    if (!ParseInternalKey(target, &ikey)) {
+      assert(0);
+    }
+    Slice uk = ikey.user_key;
+   //if (uk.size() > 64) {
+   //  uk.remove_prefix(uk.size() - 64);
+   //}
+    uk.remove_prefix(6);
+    target_v = DecodeFixed64BE(uk.data());
+   //fprintf(stdout, "Target %s\n", ikey.DebugString(true).c_str());
+   //fprintf(stdout, "Targetuk %s\n", ikey.user_key.ToString(true).c_str());
+   //fprintf(stdout, "Target16 %lu\n", *(uint64_t*)ikey.user_key.data());
+  }
+  uint64_t left_v = 0;
+  if (isindex) {
+    uint32_t region_offset = GetRestartPoint(left);
+    uint32_t shared, non_shared;
+    const char* key_ptr = DecodeKeyFunc()(
+        data_ + region_offset, data_ + restarts_, &shared, &non_shared);
+    if (key_ptr == nullptr || (shared != 0)) {
+      CorruptionError();
+      return false;
+    }
+    Slice left_key(key_ptr, non_shared);
+    ParsedInternalKey ikey;
+    if (!ParseInternalKey(left_key, &ikey)) {
+      assert(0);
+    }
+    Slice uk = ikey.user_key;
+   //if (uk.size() > 64) {
+   //  uk.remove_prefix(uk.size() - 64);
+   //}
+    uk.remove_prefix(6);
+    left_v = DecodeFixed64BE(uk.data());
+   //fprintf(stdout, "Left   %s\n", ikey.DebugString(true).c_str());
+   //fprintf(stdout, "Leftuk   %s\n", ikey.user_key.ToString(true).c_str());
+   //fprintf(stdout, "Left16 %lu\n", *(uint64_t*)ikey.user_key.data());
+  }
+  uint64_t mid_v = 0;
+  int iter = 0;
+
+  auto last = right;
   while (left < right) {
+    iter++;
     uint32_t mid = (left + right + 1) / 2;
+    uint32_t range = 16;
+    if (iter > 2 && right - left > range) {
+      if (left == 0) {
+        mid = right - range;
+      } if (right == last) {
+        mid = left + range;
+      }
+      range *= 4;
+    }
+  if (isindex) {
+    int64_t diff = target_v > left_v ? target_v - left_v : -1 * (left_v - target_v);
+    int64_t step = diff / 83785027043992;
+    uint32_t interpolated_mid = left + step >= 0 ? left + step : 0;
+    printf("left: %u mid: %u inter: %u right: %u diff: %ld target %lu left %lu\n", left, mid, interpolated_mid, right, diff, target_v, left_v);
+    if (interpolated_mid <= left) {
+      interpolated_mid = left + 1;
+    }
+    if (interpolated_mid > right) {
+      interpolated_mid = right;
+    }
+    if (iter <= 2 && interpolated_mid > left && interpolated_mid <= right) {
+      //if (interpolated_mid != left && interpolated_mid != right) {
+        mid = interpolated_mid;
+      //}
+    }
+  }
     uint32_t region_offset = GetRestartPoint(mid);
     uint32_t shared, non_shared;
     const char* key_ptr = DecodeKeyFunc()(
@@ -516,12 +588,27 @@ bool BlockIter<TValue>::BinarySeek(const Slice& target, uint32_t left,
       return false;
     }
     Slice mid_key(key_ptr, non_shared);
+
+  if (isindex) {
+    ParsedInternalKey ikey;
+    if (!ParseInternalKey(mid_key, &ikey)) {
+      assert(0);
+    }
+    Slice uk = ikey.user_key;
+   //if (uk.size() > 64) {
+   //  uk.remove_prefix(uk.size() - 64);
+   //}
+    uk.remove_prefix(6);
+    mid_v = DecodeFixed64BE(uk.data());
+  }
+
     bs_cmp_++;
     int cmp = comp->Compare(mid_key, target);
     if (cmp < 0) {
       // Key at "mid" is smaller than "target". Therefore all
       // blocks before "mid" are uninteresting.
       left = mid;
+      left_v = mid_v;
     } else if (cmp > 0) {
       // Key at "mid" is >= "target". Therefore all blocks at or
       // after "mid" are uninteresting.

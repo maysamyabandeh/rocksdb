@@ -321,7 +321,7 @@ class BlockIter : public InternalIteratorBase<TValue> {
 
   template <typename DecodeKeyFunc>
   inline bool BinarySeek(const Slice& target, uint32_t left, uint32_t right,
-                         uint32_t* index, const Comparator* comp);
+                         uint32_t* index, const Comparator* comp, bool isindex);
 };
 
 class DataBlockIter final : public BlockIter<Slice> {

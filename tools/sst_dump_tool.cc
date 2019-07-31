@@ -557,6 +557,7 @@ Status SstFileReader::ReadSequential(bool print_kv, uint64_t read_num,
     iter->SeekToFirst();
   }
   std::vector<std::string> keys;
+  uint64_t last_v = 0;
   for (; iter->Valid(); iter->Next()) {
     Slice key = iter->key();
     BlockHandle value = iter->value();
@@ -584,9 +585,21 @@ Status SstFileReader::ReadSequential(bool print_kv, uint64_t read_num,
 
     keys.push_back(key.ToString());
     if (print_kv) {
+      Slice uk = ikey.user_key;
+     //if (uk.size() > 64) {
+     //  uk.remove_prefix(uk.size() - 64);
+     //}
+      uk.remove_prefix(6);
+      //uint64_t v = *(uint64_t*) uk.data();
+      uint64_t v = DecodeFixed64BE(uk.data());
+      int64_t diff = v > last_v ? v - last_v : -1 * (last_v - v);
+      fprintf(stdout, "IndexLong %lu %ld\n", v, diff);
+      last_v = v;
       fprintf(stdout, "Index %s => %lu,%lu\n",
           ikey.DebugString(output_hex_).c_str(),
           value.offset(), value.size());
+      fprintf(stdout, "User   %s\n",
+          uk.ToString(output_hex_).c_str());
     }
   }
   Trie tree(keys);
@@ -595,6 +608,7 @@ Status SstFileReader::ReadSequential(bool print_kv, uint64_t read_num,
   std::string buf;
   printf("Encode count = %zu\n", tree.NumberCountLeftSize());
   printf("Encode size = %zu\n", tree.EncodeLeftSize(&buf));
+  printf("SILT size = %zu\n", tree.EncodeSiltStyle() / 8);
 
   read_num_ += i;
 
