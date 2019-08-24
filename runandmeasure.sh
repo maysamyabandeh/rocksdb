@@ -1,21 +1,23 @@
+conf="$1"
 dbdir="./dbbench"
+bin="/home/myabandeh/rocksdb/db_bench"
 dname=vda
 nw=100000
 
+echo $conf
+#conf="--level_type=O,T,T,N,L --rpl=0,4,3,2,1 --rpl_multiplier=0,7,4,3,1 --fanout=0,1,4,4,5"
+
 myargs="
   --stats_dump_period_sec=1 \
-  --value_size=204800 \
+  --value_size=20480 \
   --max_background_jobs=16 \
   --max_bytes_for_level_multiplier=2 \
   --max_write_buffer_number=2 \
   --max_bytes_for_level_base=33554432 \
   --dump_malloc_stats=false \
   --level0_slowdown_writes_trigger=30 \
-  --num_logical_levels=6 \
-  --level_type=O,T,T,T,N,N,L \
-  --rpl=0,4,3,2,2,2,1 \
-  --rpl_multiplier=0,7,4,3,1,1,1 \
-  --fanout=0,1,4,2,2,2,2 \
+  --num_logical_levels=4 \
+  $conf
 "
 #sfx=j${j}.pri${cpri}.dyn${dyn}
 sfx=adaptive
@@ -25,7 +27,7 @@ vmstat 1 >& vw.$sfx &
 vpid=$!
 iostat -kx 1 >& iw.$sfx &
 ipid=$!
-./db_bench --benchmarks="fillrandom,stats" --use_existing_db=0 --db=$dbdir --num=$nw $defargs $myargs >& ow.$sfx
+$bin --benchmarks="fillrandom,stats" --use_existing_db=0 --db=$dbdir --num=$nw $defargs $myargs >& ow.$sfx
 kill $vpid
 kill $ipid
 du -hs $dbdir > dw.$sfx
@@ -35,7 +37,7 @@ vmstat 1 >& vr.$sfx &
 vpid=$!
 iostat -kx 1 >& ir.$sfx &
 ipid=$!
-./db_bench --benchmarks="readrandom,stats" --use_existing_db=1 --db=$dbdir --duration=30 $defargs $myargs >& or.$sfx
+$bin --benchmarks="readrandom,stats" --use_existing_db=1 --db=$dbdir --duration=30 $defargs $myargs >& or.$sfx
 kill $vpid
 kill $ipid
 du -hs $dbdir > dr.$sfx
