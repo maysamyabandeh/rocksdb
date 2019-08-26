@@ -28,32 +28,32 @@ while [[ 1 ]]; do
   for i in ${rpl[*]}; do
     if [[ $i -eq 0 ]]; then continue 2; fi
   done
-  fanout_int=0
+  ltype_int=0
   while [[ 1 ]]; do
-    inc fanout_int fanout $max_fanout $level
+    inc ltype_int ltype 3 $level
     if [[ $? -ne 0 ]]; then break; fi
     # skip invalid configurations
-    for i in ${fanout[*]}; do
-      if [[ $i -eq 0 ]]; then continue 2; fi
+    if [[ ${ltype[1]} -ne 0 ]]; then continue; fi # 1st must be T
+    if [[ ${ltype[$level]} -ne 2 ]]; then continue; fi # Last must be L
+    last_type=0;
+    for t in ${ltype[*]}; do
+      if [[ $t -lt $last_type ]]; then continue 2; fi # TTT NNN LLL
+      last_type=$t
     done
-    if [[ ${fanout[1]} -ne 1 ]]; then continue; fi
-    ltype_int=0
+    for l in `seq 1 $level`; do
+      if [[ ${ltype[$l]} -eq 0 && ${rpl[$l]} -lt 2 ]]; then continue 2; fi
+      if [[ ${ltype[$l]} -eq 1 && ${rpl[$l]} -lt 2 ]]; then continue 2; fi
+      if [[ ${ltype[$l]} -eq 2 && ${rpl[$l]} -gt 1 ]]; then continue 2; fi
+    done
+    fanout_int=0
     while [[ 1 ]]; do
-      inc ltype_int ltype 3 $level
+      inc fanout_int fanout $max_fanout $level
       if [[ $? -ne 0 ]]; then break; fi
       # skip invalid configurations
-      if [[ ${ltype[1]} -ne 0 ]]; then continue; fi # 1st must be T
-      if [[ ${ltype[$level]} -ne 2 ]]; then continue; fi # Last must be L
-      last_type=0;
-      for t in ${ltype[*]}; do
-        if [[ $t -lt $last_type ]]; then continue 2; fi # TTT NNN LLL
-        last_type=$t
+      for i in ${fanout[*]}; do
+        if [[ $i -eq 0 ]]; then continue 2; fi
       done
-      for l in `seq 1 $level`; do
-        if [[ ${ltype[$l]} -eq 0 && ${rpl[$l]} -lt 2 ]]; then continue 2; fi
-        if [[ ${ltype[$l]} -eq 1 && ${rpl[$l]} -lt 2 ]]; then continue 2; fi
-        if [[ ${ltype[$l]} -eq 2 && ${rpl[$l]} -gt 1 ]]; then continue 2; fi
-      done
+      if [[ ${fanout[1]} -ne 1 ]]; then continue; fi
       for l in `seq 2 $level`; do
         if [[ ${ltype[$l]} -eq 0 && ${fanout[$l]} -ne ${rpl[l-1]} ]]; then continue 2; fi
         if [[ ${ltype[$l]} -ne 0 && ${fanout[$l]} -lt $((2*${rpl[l-1]})) ]]; then continue 2; fi
