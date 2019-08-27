@@ -1,5 +1,5 @@
-level=4
-max_rpl=3
+level=6
+max_rpl=4
 max_fanout=5
 
 function inc {
@@ -74,7 +74,7 @@ while [[ 1 ]]; do
       for l in `seq 1 $level`; do
         case $l in 
           1) printf ',7';;
-          *) if [[ ${ltype[$l]} -eq 2 ]]; then printf ',1'; else printf ',3'; fi
+          *) if [[ ${ltype[$l]} -ne 0 ]]; then printf ',1'; else printf ',3'; fi
             ;;
          esac
       done

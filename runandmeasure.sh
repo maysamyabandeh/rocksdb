@@ -2,7 +2,7 @@ conf="$1"
 dbdir="./dbbench"
 bin="/home/myabandeh/rocksdb/db_bench"
 dname=vda
-nw=100000
+nw=1000000
 
 echo $conf
 #conf="--level_type=O,T,T,N,L --rpl=0,4,3,2,1 --rpl_multiplier=0,7,4,3,1 --fanout=0,1,4,4,5"
@@ -16,7 +16,7 @@ myargs="
   --max_bytes_for_level_base=33554432 \
   --dump_malloc_stats=false \
   --level0_slowdown_writes_trigger=30 \
-  --num_logical_levels=4 \
+  --num_logical_levels=6 \
   $conf
 "
 #sfx=j${j}.pri${cpri}.dyn${dyn}
