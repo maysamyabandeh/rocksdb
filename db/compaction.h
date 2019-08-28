@@ -62,8 +62,6 @@ class Compaction {
 
   // Outputs will go to this level
   int output_level() const { return output_level_; }
- //int final_level() const { return final_level_; }
- //int set_final_level(int level) const { final_level_ = level; }
 
   // Returns the number of input levels in this compaction.
   size_t num_input_levels() const { return inputs_.size(); }
@@ -279,7 +277,6 @@ class Compaction {
 
   const int start_level_;    // the lowest level to be compacted
   const int output_level_;  // levels to which output files are stored
-  //const int final_level_ = -1;  // final output_level_ after retargetting
   uint64_t max_output_file_size_;
   uint64_t max_compaction_bytes_;
   uint32_t max_subcompactions_;
@@ -336,6 +333,9 @@ class Compaction {
   CompactionReason compaction_reason_;
 
  public:
+  // The generation will determine how fresh are the data in the output level.
+  // This will clarify the first level in a logical level that should be looked
+  // into during read.
   size_t output_gen_ = 0;
 };
 

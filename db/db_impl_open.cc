@@ -966,22 +966,24 @@ Status DBImpl::WriteLevel0TableForRecovery(int job_id, ColumnFamilyData* cfd,
   // Note that if file_size is zero, the file has been deleted and
   // should not be added to the manifest.
   int level = 0;
-  //kill L0
+  // Find an empty L1 and set its age
   {
     auto vstorage = cfd->current()->storage_info();
     const int llevel = 1;
     const int start_level = vstorage->ll_to_l_[llevel];
     const int next_level = vstorage->ll_to_l_[llevel + 1];
 
+    // find an empty L1
     bool empty = false;
-    level = next_level - 1;
-    for (; !empty && level >= start_level; level--) {
+    for (level = start_level; level < next_level; level++) {
       empty = vstorage->files_[level].size() == 0;
       empty = empty && !cfd->compaction_picker()->IsReserveLL1(level);
       if (empty) {
         break;
       }
     }
+    // Guranteeed to fine one due to the hack that retry flush if less than 4
+    // slots is avaialble
     assert(level);
     assert(empty);
     cfd->compaction_picker()->ReserveLL1(level);

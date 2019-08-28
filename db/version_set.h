@@ -108,7 +108,6 @@ class VersionStorageInfo {
   void UpdateNumNonEmptyLevels();
 
   void GenerateFileIndexer() {
-    //file_indexer_.UpdateIndex(&arena_, num_non_empty_levels_, files_, ordered_level_);
     file_indexer_.UpdateIndex(&arena_, ordered_level_.size(), files_, ordered_level_);
   }
 
@@ -126,6 +125,9 @@ class VersionStorageInfo {
   // TODO find a better way to pass compaction_options_fifo.
   void ComputeCompactionScore(const ImmutableCFOptions& immutable_cf_options,
                               const MutableCFOptions& mutable_cf_options);
+  void ComputeAdaptiveCompactionScore(
+      const ImmutableCFOptions& immutable_cf_options,
+      const MutableCFOptions& mutable_cf_options);
 
   // Estimate est_comp_needed_bytes_
   void EstimateCompactionBytesNeeded(
@@ -385,6 +387,8 @@ class VersionStorageInfo {
   // Must be called after any change to MutableCFOptions.
   void CalculateBaseBytes(const ImmutableCFOptions& ioptions,
                           const MutableCFOptions& options);
+  void CalculateAdaptiveBaseBytes(const ImmutableCFOptions& ioptions,
+                          const MutableCFOptions& options);
 
   // Returns an estimate of the amount of live data in bytes.
   uint64_t EstimateLiveDataSize() const;
@@ -418,18 +422,23 @@ class VersionStorageInfo {
   // Per-level max bytes
   std::vector<uint64_t> level_max_bytes_;
  public:
+  // Number of configured sorted runs per logical level
   std::vector<size_t> llevel_max_runs_;
+  // fanout of each logical level
   std::vector<size_t> llevel_fanout_;
+  // T: tiered, N: Leveled-N, L: Leveled
   std::vector<char> llevel_type_;
-  std::vector<size_t> age_;
+  // The age (generation) of each physical level
+  std::vector<size_t> level_age_;
   // <level, age>
   std::vector<std::pair<size_t,size_t>> ordered_level_;
 
+  // level_age_ is updated. Reorder the levels based on their age.
   void UpdateLevelOrder() {
     ordered_level_.resize(num_levels_);
     for (int i = 0; i < num_levels_; i++) {
       ordered_level_[i].first = i;
-      ordered_level_[i].second = age_[i];
+      ordered_level_[i].second = level_age_[i];
       if (files_[i].empty()) {
         ordered_level_[i].second = 0;
       }
@@ -514,9 +523,13 @@ class VersionStorageInfo {
   std::vector<double> compaction_score_;
   std::vector<int> compaction_level_;
  public:
+  // The compaction score of each logical level. The level is specified in
+  // compaction_l_level_
   std::vector<double> compaction_l_score_;
   std::vector<int> compaction_l_level_;
+  // Mapping between each physical level to its logical level.
   std::vector<int> l_to_ll_;
+  // Mapping between each loical level to its first physical level
   std::vector<int> ll_to_l_;
   int l0_delay_trigger_count_ = 0;  // Count used to trigger slow down and stop
                                     // for number of L0 files.
@@ -1031,7 +1044,7 @@ class VersionSet {
       bool* have_log_number, uint64_t* log_number, bool* have_prev_log_number,
       uint64_t* previous_log_number, bool* have_next_file, uint64_t* next_file,
       bool* have_last_sequence, SequenceNumber* last_sequence,
-      uint64_t* min_log_number_to_keep, uint32_t* max_column_family, std::map<uint32_t,std::map<int, uint32_t>>* level_age);
+      uint64_t* min_log_number_to_keep, uint32_t* max_column_family, std::map<uint32_t,std::map<int, uint32_t>>* cf_level_age);
 
   Status ProcessManifestWrites(std::deque<ManifestWriter>& writers,
                                InstrumentedMutex* mu, Directory* db_directory,
@@ -1040,7 +1053,7 @@ class VersionSet {
 
   std::unique_ptr<ColumnFamilySet> column_family_set_;
 
-  std::map<uint32_t, std::map<int, uint32_t>> level_age_;
+  std::map<uint32_t, std::map<int, uint32_t>> cf_level_age_;
   Env* const env_;
   const std::string dbname_;
   const ImmutableDBOptions* const db_options_;

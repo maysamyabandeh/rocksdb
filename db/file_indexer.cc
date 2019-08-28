@@ -27,7 +27,8 @@ size_t FileIndexer::LevelIndexSize(size_t level) const {
   return next_level_index_[level].num_index;
 }
 
-void FileIndexer::GetNextLevelIndex(const size_t level, const size_t next_level, const size_t file_index,
+void FileIndexer::GetNextLevelIndex(const size_t level, const size_t next_level,
+                                    const size_t file_index,
                                     const int cmp_smallest,
                                     const int cmp_largest, int32_t* left_bound,
                                     int32_t* right_bound) const {
@@ -41,8 +42,6 @@ void FileIndexer::GetNextLevelIndex(const size_t level, const size_t next_level,
   }
 
   assert(level < num_levels_ - 1);
-//printf("level %zu next_level %zu file_index %zu lrb[level] %d\n", level, next_level, file_index, level_rb_[level]);
-//fflush(stdout);
   assert(static_cast<int32_t>(file_index) <= level_rb_[level]);
 
   const IndexUnit* index_units = next_level_index_[level].index_units;
@@ -71,8 +70,6 @@ void FileIndexer::GetNextLevelIndex(const size_t level, const size_t next_level,
 
   assert(*left_bound >= 0);
   assert(*left_bound <= *right_bound + 1);
-//printf("level %zu next_level %zu file_index %zu lrb[next_level] %d\n", level, next_level, file_index, level_rb_[next_level]);
-//fflush(stdout);
   assert(*right_bound <= level_rb_[next_level]);
 }
 
@@ -105,9 +102,6 @@ std::vector<std::pair<size_t,size_t>>& ordered_level) {
     const auto& upper_files = files[level];
     const int32_t upper_size = static_cast<int32_t>(upper_files.size());
     const auto& lower_files = files[next_level];
-//printf("level: %zu files: %zu\n", level, upper_files.size());
-//fflush(stdout);
-//assert(upper_files.size());
     level_rb_[level] = static_cast<int32_t>(upper_files.size()) - 1;
     if (upper_size == 0) {
       continue;

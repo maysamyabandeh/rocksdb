@@ -1114,7 +1114,10 @@ VersionStorageInfo::VersionStorageInfo(
       // cfd is nullptr if Version is dummy
       num_levels_(levels),
       num_non_empty_levels_(0),
-      age_(num_levels_),
+      llevel_max_runs_(num_levels_),
+      llevel_fanout_(num_levels_),
+      llevel_type_(num_levels_),
+      level_age_(num_levels_),
       file_indexer_(user_comparator),
       compaction_style_(compaction_style),
       files_(new std::vector<FileMetaData*>[num_levels_]),
@@ -1124,6 +1127,8 @@ VersionStorageInfo::VersionStorageInfo(
       next_file_to_compact_by_size_(num_levels_),
       compaction_score_(num_levels_),
       compaction_level_(num_levels_),
+      compaction_l_score_(num_levels_),
+      compaction_l_level_(num_levels_),
       l0_delay_trigger_count_(0),
       accumulated_file_size_(0),
       accumulated_raw_key_size_(0),
@@ -1589,42 +1594,8 @@ uint32_t GetExpiredTtlFilesCount(const ImmutableCFOptions& ioptions,
 void VersionStorageInfo::ComputeCompactionScore(
     const ImmutableCFOptions& immutable_cf_options,
     const MutableCFOptions& mutable_cf_options) {
-  size_t num_llevels = immutable_cf_options.num_levels;
-  compaction_l_score_.resize(num_llevels+1);
-  compaction_l_level_.resize(num_llevels+1);
-  for (size_t i = 1; i <= num_llevels; ++i) {
-    compaction_l_score_[i] = 0; //default
-    compaction_l_level_[i] = i;
-  }
-  size_t r = 0;
-  int last_ll = 0;
-  for (int level = 0; level <= MaxInputLevel(); level++, r++) {
-    bool assigned = false;
-    int ll = l_to_ll_[level];
-    assert(l_to_ll_[ll_to_l_[ll]] == ll);
-    if (last_ll != ll) {
-      r = 0;
-    }
-    last_ll = ll;
-    if (level != 0) {
-    if (llevel_max_runs_[ll] > 1) { // tiered
-      bool being_compacted = false;
-      bool empty = true;
-      for (auto* f : files_[level]) {
-        empty = false;
-        if (f->being_compacted) {
-          being_compacted = true;
-          break;
-        }
-      }
-      if (!empty && !being_compacted) {
-        //ROCKS_LOG_WARN(immutable_cf_options.info_log, "l%zu: %f + %f", level, compaction_l_score_[ll], 1.0 / llevel_max_runs_[ll]);
-        compaction_l_score_[ll] += 1.0 / llevel_max_runs_[ll];
-      }
-      assigned = true;
-    }
-    //else use the existig size / max size scoring scheme implemented below
-    }
+  ComputeAdaptiveCompactionScore(immutable_cf_options, mutable_cf_options);
+  for (int level = 0; level <= MaxInputLevel(); level++) {
     double score;
     if (level == 0) {
       // We treat level-0 specially by bounding the number of files
@@ -1698,11 +1669,6 @@ void VersionStorageInfo::ComputeCompactionScore(
     }
     compaction_level_[level] = level;
     compaction_score_[level] = score;
-    if (llevel_type_[ll] == 'N' && ll_to_l_[ll] == level && score > 1) {
-      compaction_l_score_[ll] += score;
-    } else if (!assigned) {
-      compaction_l_score_[ll] = score;
-    }
   }
 
   // sort all the levels based on their score. Higher scores get listed
@@ -1719,13 +1685,72 @@ void VersionStorageInfo::ComputeCompactionScore(
       }
     }
   }
+  ComputeFilesMarkedForCompaction();
+  ComputeBottommostFilesMarkedForCompaction();
+  if (mutable_cf_options.ttl > 0) {
+    ComputeExpiredTtlFiles(immutable_cf_options, mutable_cf_options.ttl);
+  }
+  EstimateCompactionBytesNeeded(mutable_cf_options);
+}
+
+void VersionStorageInfo::ComputeAdaptiveCompactionScore(
+    const ImmutableCFOptions& immutable_cf_options,
+    const MutableCFOptions&) {
+  size_t num_llevels = immutable_cf_options.num_logical_levels;
+  compaction_l_score_.resize(num_llevels+1);
+  compaction_l_level_.resize(num_llevels+1);
+  for (size_t i = 0; i <= num_llevels; ++i) {
+    compaction_l_score_[i] = 0; //default
+    compaction_l_level_[i] = i;
+  }
+  // Last level is not the source of compaction
+  for (int level = 1; level < num_levels() - 1; level++) {
+    assert(level != 0); // kill L0
+    int ll = l_to_ll_[level];
+    assert((size_t)ll != num_llevels);
+    assert(l_to_ll_[ll_to_l_[ll]] == ll);
+    if (llevel_max_runs_[ll] > 1) {  // tiered or leveled-N
+      bool being_compacted = false;
+      bool empty = true;
+      for (auto* f : files_[level]) {
+        empty = false;
+        if (f->being_compacted) {
+          being_compacted = true;
+          break;
+        }
+      }
+      if (!empty && !being_compacted) {
+        compaction_l_score_[ll] += 1.0 / llevel_max_runs_[ll];
+      }
+    }
+    const bool level_l = llevel_type_[ll] == 'L';
+    // The last sorted run in leveled-N
+    const bool last_level_n = llevel_type_[ll] == 'N' && ll_to_l_[ll+1] == level+1;
+    if (level_l || last_level_n) {
+      // Compute the ratio of current size to size limit.
+      uint64_t level_bytes_no_compacting = 0;
+      for (auto f : files_[level]) {
+        if (!f->being_compacted) {
+          level_bytes_no_compacting += f->compensated_file_size;
+        }
+      }
+      double score = static_cast<double>(level_bytes_no_compacting) /
+              MaxBytesForLevel(level);
+      compaction_l_score_[ll] += score;
+    }
+  }
+
   for (size_t i = 1; i < num_llevels; i++) {
     if (compaction_l_score_[i] > 1) {
       compaction_l_score_[i] += 1.0 / i; // prio upper levels
     }
   }
-  for (size_t i = 0; i < num_llevels - 2; i++) {
-    for (size_t j = i + 1; j < num_llevels - 1; j++) {
+
+  // The last level's score must be 0
+  assert(compaction_l_score_[num_llevels] == 0);
+  // sort the rest
+  for (size_t i = 0; i < num_llevels - 1; i++) {
+    for (size_t j = i + 1; j < num_llevels; j++) {
       if (compaction_l_score_[i] < compaction_l_score_[j]) {
         double score = compaction_l_score_[i];
         int level = compaction_l_level_[i];
@@ -1736,19 +1761,11 @@ void VersionStorageInfo::ComputeCompactionScore(
       }
     }
   }
-  ROCKS_LOG_WARN(immutable_cf_options.info_log, "SCORE:");
-  for (size_t i = 0; i < num_llevels; i++) {
-    if (compaction_l_score_[i] == 0) break;
-    ROCKS_LOG_WARN(immutable_cf_options.info_log, "l%zu: %f", compaction_l_level_[i],
+  ROCKS_LOG_WARN(immutable_cf_options.info_log, "SCORE (num level=%zu):", num_llevels);
+  for (size_t i = 0; i <= num_llevels; i++) {
+    ROCKS_LOG_WARN(immutable_cf_options.info_log, "LL%zu: %f", compaction_l_level_[i],
                    compaction_l_score_[i]);
   }
-
-  ComputeFilesMarkedForCompaction();
-  ComputeBottommostFilesMarkedForCompaction();
-  if (mutable_cf_options.ttl > 0) {
-    ComputeExpiredTtlFiles(immutable_cf_options, mutable_cf_options.ttl);
-  }
-  EstimateCompactionBytesNeeded(mutable_cf_options);
 }
 
 void VersionStorageInfo::ComputeFilesMarkedForCompaction() {
@@ -1866,14 +1883,6 @@ void VersionStorageInfo::SetFinalized() {
   for (int level = 1; level < base_level(); level++) {
     assert(NumLevelBytes(level) == 0);
   }
- //uint64_t max_bytes_prev_level = 0;
- //for (int level = base_level(); level < num_levels() - 1; level++) {
- //  if (LevelFiles(level).size() == 0) {
- //    continue;
- //  }
- //  assert(MaxBytesForLevel(level) >= max_bytes_prev_level);
- //  max_bytes_prev_level = MaxBytesForLevel(level);
- //}
   int num_empty_non_l0_level = 0;
   for (int level = 0; level < num_levels(); level++) {
     assert(LevelFiles(level).size() == 0 ||
@@ -2543,13 +2552,8 @@ uint64_t VersionStorageInfo::MaxBytesForLevel(int level) const {
 
 void VersionStorageInfo::CalculateBaseBytes(const ImmutableCFOptions& ioptions,
                                             const MutableCFOptions& options) {
-  // ROCKS_LOG_INFO(ioptions.info_log, "LSM Age:");
-  // for (int l = 0; l < num_levels_; l++) {
-  //   if (age_.at(l) != 0) {
-  //     ROCKS_LOG_INFO(ioptions.info_log, "L%d: %lu", l, age_.at(l));
-  //   }
-  // }
-
+  CalculateAdaptiveBaseBytes(ioptions, options);
+  return;
   // Special logic to set number of sorted runs.
   // It is to match the previous behavior when all files are in L0.
   int num_l0_count = static_cast<int>(files_[0].size());
@@ -2566,85 +2570,20 @@ void VersionStorageInfo::CalculateBaseBytes(const ImmutableCFOptions& ioptions,
   set_l0_delay_trigger_count(num_l0_count);
 
   level_max_bytes_.resize(ioptions.num_levels);
-
-  size_t num_llevels = ioptions.num_logical_levels;
-  assert(num_llevels);
-  llevel_max_runs_.resize(num_llevels+1); // there is no logical l0
-  llevel_fanout_.resize(num_llevels+1);
-  llevel_type_.resize(num_llevels+1);
-  l_to_ll_.resize(ioptions.num_levels);
-  ll_to_l_.resize(num_llevels+1);
-  ll_to_l_[0] = 0;
-  l_to_ll_[0] = 0;
-
   if (!ioptions.level_compaction_dynamic_level_bytes) {
     base_level_ = (ioptions.compaction_style == kCompactionStyleLevel) ? 1 : -1;
-    for (size_t i = 1; i <= num_llevels; ++i) {
-      llevel_max_runs_[i] = ioptions.rpl[i];
-      llevel_fanout_[i] = ioptions.fanout[i];
-      llevel_type_[i] = ioptions.level_type[i];
-    }
 
-    size_t r = 0;
-    size_t ll = 0;
-    size_t last_nonempty_size = 0;
     // Calculate for static bytes base case
-    for (int i = 0; i < ioptions.num_levels; ++i, ++r) {
-      if (i == 1) {
-        r = 0;  // sorted runs start with level 1
-        ll = 1;
-        ll_to_l_[ll] = i;
-      }
-      bool reserved = false;
-      bool new_ll = false;
-      if (ll != 0) {
-        size_t rpl = llevel_max_runs_[ll];
-        char type = llevel_type_[ll];
-        if (type == 'T') { // tiered
-          // multiply rpl to reserve space for lazy compaction
-          rpl = ioptions.rpl_multiplier[ll] * rpl;
-        }
-        bool cut_level = r == rpl;
-        if (cut_level) {
-          r = 0;
-          ll++;
-          ll_to_l_[ll] = i;
-          type = llevel_type_[ll];
-          rpl = llevel_max_runs_[ll];
-          if (type == 'T') {  // tiered
-            rpl = ioptions.rpl_multiplier[ll] * rpl;
-          }
-        }
-        if (rpl - r > llevel_max_runs_[ll] && type == 'T') {
-          reserved = true;
-        }
-        if (rpl - r == llevel_max_runs_[ll] || type == 'L') {
-          new_ll = ll > 1;
-        }
-      }
-      l_to_ll_[i] = ll;
+    for (int i = 0; i < ioptions.num_levels; ++i) {
       if (i == 0 && ioptions.compaction_style == kCompactionStyleUniversal) {
         level_max_bytes_[i] = options.max_bytes_for_level_base;
       } else if (i > 1) {
-        if (reserved) {
-          level_max_bytes_[i] = 1;
-        } else {
-          level_max_bytes_[i] =
-              !new_ll ? last_nonempty_size
-                      : MultiplyCheckOverflow(
-                            MultiplyCheckOverflow(
-                                last_nonempty_size,
-                                llevel_fanout_[ll]),
-                            options.MaxBytesMultiplerAdditional(i - 1));
-          last_nonempty_size = level_max_bytes_[i];
-        }
+        level_max_bytes_[i] = MultiplyCheckOverflow(
+            MultiplyCheckOverflow(level_max_bytes_[i - 1],
+                                  options.max_bytes_for_level_multiplier),
+            options.MaxBytesMultiplerAdditional(i - 1));
       } else {
-        if (reserved) {
-          level_max_bytes_[i] = 1;
-        } else {
-          level_max_bytes_[i] = options.max_bytes_for_level_base;
-          last_nonempty_size = level_max_bytes_[i];
-        }
+        level_max_bytes_[i] = options.max_bytes_for_level_base;
       }
     }
   } else {
@@ -2731,11 +2670,43 @@ void VersionStorageInfo::CalculateBaseBytes(const ImmutableCFOptions& ioptions,
       }
     }
   }
+}
 
+void VersionStorageInfo::CalculateAdaptiveBaseBytes(const ImmutableCFOptions& ioptions,
+                                            const MutableCFOptions& options) {
+  base_level_ = (ioptions.compaction_style == kCompactionStyleLevel) ? 1 : -1;
+  level_max_bytes_.resize(ioptions.num_levels);
+  size_t num_llevels = ioptions.num_logical_levels;
+  assert(num_llevels);
+  llevel_max_runs_.resize(num_llevels+1); // there is no logical l0
+  llevel_fanout_.resize(num_llevels+1);
+  llevel_type_.resize(num_llevels+1);
+  l_to_ll_.resize(ioptions.num_levels);
+  ll_to_l_.resize(num_llevels+1);
+  ll_to_l_[0] = 0;
+  l_to_ll_[0] = 0;
+  llevel_max_runs_[0] = 0;
+  llevel_fanout_[0] = 0;
+
+  int l = 1;
+  auto max_bytes = options.max_bytes_for_level_base;
+  for (size_t ll = 1; ll <= num_llevels; ++ll) {
+    llevel_max_runs_[ll] = ioptions.rpl[ll];
+    llevel_fanout_[ll] = ioptions.fanout[ll];
+    llevel_type_[ll] = ioptions.level_type[ll];
+    size_t sorted_runs = ioptions.rpl_multiplier[ll] * ioptions.rpl[ll];
+    ll_to_l_[ll] = l;
+    max_bytes *= ioptions.fanout[ll];
+    for (size_t i = 0; i < sorted_runs; i++) {
+      l_to_ll_[l] = ll;
+      level_max_bytes_[l] = max_bytes;
+      l++;
+    }
+  }
   static int printed = 0;
   if (printed < 3) {
     ROCKS_LOG_WARN(ioptions.info_log, "Target LSM Shape:");
-    for (int l = 0; l < num_levels_; l++) {
+    for (l = 0; l < num_levels_; l++) {
       ROCKS_LOG_WARN(ioptions.info_log, "L%d: %lu", l, MaxBytesForLevel(l));
     }
     printed ++;
@@ -3384,7 +3355,7 @@ Status VersionSet::ApplyOneVersionEdit(
     bool* have_prev_log_number, uint64_t* previous_log_number,
     bool* have_next_file, uint64_t* next_file, bool* have_last_sequence,
     SequenceNumber* last_sequence, uint64_t* min_log_number_to_keep,
-    uint32_t* max_column_family, std::map<uint32_t,std::map<int, uint32_t>>* level_age) {
+    uint32_t* max_column_family, std::map<uint32_t,std::map<int, uint32_t>>* cf_level_age) {
   // Not found means that user didn't supply that column
   // family option AND we encountered column family add
   // record. Once we encounter column family drop record,
@@ -3501,7 +3472,7 @@ Status VersionSet::ApplyOneVersionEdit(
   }
   
   if (edit.age_update_ != AgeUpdate(0,0)) {
-    (*level_age)[edit.column_family_][edit.age_update_.first] = edit.age_update_.second;
+    (*cf_level_age)[edit.column_family_][edit.age_update_.first] = edit.age_update_.second;
   }
   return Status::OK();
 }
@@ -3620,7 +3591,7 @@ Status VersionSet::Recover(
                 &have_log_number, &log_number, &have_prev_log_number,
                 &previous_log_number, &have_next_file, &next_file,
                 &have_last_sequence, &last_sequence, &min_log_number_to_keep,
-                &max_column_family, &level_age_);
+                &max_column_family, &cf_level_age_);
             if (!s.ok()) {
               break;
             }
@@ -3637,7 +3608,7 @@ Status VersionSet::Recover(
             &have_log_number, &log_number, &have_prev_log_number,
             &previous_log_number, &have_next_file, &next_file,
             &have_last_sequence, &last_sequence, &min_log_number_to_keep,
-            &max_column_family, &level_age_);
+            &max_column_family, &cf_level_age_);
       }
       if (!s.ok()) {
         break;
@@ -3763,7 +3734,7 @@ Status VersionSet::Recover(
   for (auto cfd : *GetColumnFamilySet()) {
     auto picker = cfd->compaction_picker();
     auto cfid = cfd->GetID();
-    auto levelgen = level_age_[cfid];
+    auto levelgen = cf_level_age_[cfid];
     size_t max_age = 0;
     for (auto it = levelgen.begin(); it != levelgen.end(); it++) {
       auto level = it->first;
@@ -4062,7 +4033,7 @@ Status VersionSet::DumpManifest(Options& options, std::string& dscname,
       }
 
       if (edit.age_update_ != AgeUpdate(0,0)) {
-        level_age_[edit.column_family_][edit.age_update_.first] = edit.age_update_.second;
+        cf_level_age_[edit.column_family_][edit.age_update_.first] = edit.age_update_.second;
       }
 
       if (edit.has_max_column_family_) {

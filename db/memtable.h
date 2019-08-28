@@ -412,6 +412,7 @@ class MemTable {
   bool flush_in_progress_; // started the flush
   bool flush_completed_;   // finished the flush
   uint64_t file_number_;    // filled up after flush is complete
+  // The level at which the memtbale flush will be isntalled
   int level_;
 
   // The updates to be applied to the transaction log when this

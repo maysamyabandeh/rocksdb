@@ -221,7 +221,8 @@ ColumnFamilyOptions SanitizeOptions(const ImmutableDBOptions& db_options,
     result.num_levels = 3;
   }
 
-  // TODO(myabandeh): apply it only to adaptive LSM
+  // Adjust the number of physical levels based on the configuration for logical
+  // levels if adaptive compaction is enabled.
   if (result.num_logical_levels != 0) { // adaptive enabled
     // then derive num_levels accordingly
     int num_levels = 1; // L0
@@ -233,18 +234,15 @@ ColumnFamilyOptions SanitizeOptions(const ImmutableDBOptions& db_options,
       size_t add = rpl * multiplier;
       char type = result.level_type[ll];
       assert(type == 'L' || type == 'N' || type == 'T');
+      assert(type == 'T' || multiplier == 1);
       size *= result.fanout[ll];
       ROCKS_LOG_WARN(db_options.info_log.get(), "%c%d: %zux %9s [L%d:L%d]", type, ll, rpl, BytesToHumanString(size).c_str(),
                      num_levels, num_levels + add - 1);
       num_levels += add;
     }
     result.num_levels = num_levels;
-
     ROCKS_LOG_WARN(db_options.info_log.get(), "num_logical_levels %zu num_levels %d\n", result.num_logical_levels, result.num_levels);
-    for (int l = 0; l < num_levels; l++) {
-    }
   }
-
 
   if (result.max_write_buffer_number < 2) {
     result.max_write_buffer_number = 2;

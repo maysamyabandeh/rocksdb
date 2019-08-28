@@ -35,6 +35,7 @@ class CompactionPicker {
                    const InternalKeyComparator* icmp);
   virtual ~CompactionPicker();
 
+  // Refert to implementation inline comments to see what these functions do
   virtual bool IsReserveLL1(int) { return false;}
   virtual void ReserveLL1(int) {};
   virtual void ReleaseLL1(int, size_t) {};
@@ -197,8 +198,6 @@ class CompactionPicker {
 
   // Remove this compaction from the set of running compactions
   void UnregisterCompaction(Compaction* c);
- //bool RetargetConcurrentCompactions(Compaction* c);
- //bool LevelIsEmpty(VersionStorageInfo* vstorage, int level);
 
   std::set<Compaction*>* level0_compactions_in_progress() {
     return &level0_compactions_in_progress_;
@@ -242,6 +241,8 @@ class LevelCompactionPicker : public CompactionPicker {
   virtual bool NeedsCompaction(
       const VersionStorageInfo* vstorage) const override;
 
+  // If a level belong to LL1 is reserved, it cannot be used as target for
+  // memtable flush
   virtual bool IsReserveLL1(int level) {
     return reserved_ll1s.find(level) != reserved_ll1s.end();
   }
@@ -249,12 +250,11 @@ class LevelCompactionPicker : public CompactionPicker {
     assert(reserved_ll1s.find(level) == reserved_ll1s.end());
     reserved_ll1s.insert(level);
   };
-  virtual size_t IncGen() {
-    return ++curr_gen_;
-  }
-  virtual void InitAge(size_t age) {
-    curr_gen_ = age+1;
-  }
+  // Increase the gneeration number and return the current value
+  virtual size_t IncGen() { return ++curr_gen_; }
+  // Initialize generation after restart
+  virtual void InitAge(size_t age) { curr_gen_ = age + 1; }
+  // Release an level frrom logival level 1 and set its generation number
   virtual void ReleaseLL1(int level, size_t gen) {
     assert(reserved_ll1s.find(level) != reserved_ll1s.end());
     reserved_ll1s.erase(reserved_ll1s.find(level));
@@ -264,12 +264,13 @@ class LevelCompactionPicker : public CompactionPicker {
     generation_[level] = gen;
     ROCKS_LOG_INFO(ioptions_.info_log, "Level %d generation %zu\n", level,
                    generation_[level]);
-    //printf("level %d gen %zu\n", level, generation_[level]);
   }
-  virtual size_t generation(int level) {return generation_[level];}
+  virtual size_t generation(int level) { return generation_[level]; }
   std::set<int> reserved_ll1s;
+  // Each level has a generation number; the higher it is the more fresh is the
+  // data
   std::map<int, size_t> generation_;
-  // TODO(myabandeh): initialize it after each restart
+  // The last assigned generation.
   size_t curr_gen_ = 0;
 };
 

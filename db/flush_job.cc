@@ -216,6 +216,7 @@ Status FlushJob::Run(LogsWithPrepTracker* prep_tracker,
   // This will release and re-acquire the mutex.
   int output_level = 0;
   Status s = WriteLevel0Table(&output_level);
+  assert(output_level);
 
   if (s.ok() &&
       (shutting_down_->load(std::memory_order_acquire) || cfd_->IsDropped())) {
@@ -389,32 +390,29 @@ Status FlushJob::WriteLevel0Table(int* output_level) {
     // that key range.
     // Add file to L0
 
-  {
-    auto vstorage = cfd_->current()->storage_info();
-    const int llevel = 1;
-    const int start_level = vstorage->ll_to_l_[llevel];
-    const int next_level = vstorage->ll_to_l_[llevel + 1];
+    // Find an empty L1 level
+    {
+      auto vstorage = cfd_->current()->storage_info();
+      const int llevel = 1;
+      const int start_level = vstorage->ll_to_l_[llevel];
+      const int next_level = vstorage->ll_to_l_[llevel + 1];
 
-    bool empty = false;
-    auto level = next_level - 1;
-    for (; !empty && level >= start_level; level--) {
-      empty = vstorage->files_[level].size() == 0;
-      empty = empty && !cfd_->compaction_picker()->IsReserveLL1(level);
-      if (empty) {
-        break;
+      bool empty = false;
+      for (auto level = start_level; level < next_level; level++) {
+        empty = vstorage->files_[level].size() == 0;
+        empty = empty && !cfd_->compaction_picker()->IsReserveLL1(level);
+        if (empty) {
+          *output_level = level;
+          break;
+        }
       }
+      assert(empty);
+      cfd_->compaction_picker()->ReserveLL1(*output_level);
+      ROCKS_LOG_INFO(db_options_.info_log,
+                     "[%s] [JOB %d] Level-1 (to %d) flush table #%" PRIu64,
+                     cfd_->GetName().c_str(), job_context_->job_id,
+                     *output_level, meta_.fd.GetNumber());
     }
-    *output_level = level;
-    cfd_->compaction_picker()->ReserveLL1(*output_level);
-    ROCKS_LOG_INFO(db_options_.info_log,
-                   "[%s] [JOB %d] Level-1 (to %d) flush table #%" PRIu64,
-                   cfd_->GetName().c_str(), job_context_->job_id,
-                   *output_level,
-                   meta_.fd.GetNumber());
-   // printf("start: %d next: %d level: %d job_id: %d\n", start_level, next_level, level, job_context_->job_id);
-   // fflush(stdout);
-    assert(empty);
-  }
 
     edit_->AddFile(*output_level, meta_.fd.GetNumber(), meta_.fd.GetPathId(),
                    meta_.fd.GetFileSize(), meta_.smallest, meta_.largest,
@@ -422,7 +420,6 @@ Status FlushJob::WriteLevel0Table(int* output_level) {
                    meta_.marked_for_compaction);
     assert(output_age_);
     edit_->UpdateAge(*output_level, output_age_);
-    //printf("KILLL0 AddFile level: %d fd: %lu\n", output_level, meta_.fd.GetNumber());
     ROCKS_LOG_INFO(db_options_.info_log,
                    "[%s] KILLL0 Moving #%" PRIu64 " to level-%d %" PRIu64
                    " bytes\n",
@@ -439,7 +436,6 @@ Status FlushJob::WriteLevel0Table(int* output_level) {
   cfd_->internal_stats()->AddCFStats(InternalStats::BYTES_FLUSHED,
                                      meta_.fd.GetFileSize());
   RecordFlushIOStats();
-
   return s;
 }
 

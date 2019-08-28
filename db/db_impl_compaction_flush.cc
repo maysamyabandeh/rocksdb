@@ -1444,31 +1444,31 @@ Status DBImpl::BackgroundFlush(bool* made_progress, JobContext* job_context,
     const FlushRequest& flush_req = PopFirstFromFlushQueue();
 
     bool retry = false;
+    // Set retry if there is risk of no L1 slot is available when flush result
+    // is ready to install
     for (const auto& iter : flush_req) {
       ColumnFamilyData* cfd = iter.first;
-        {
-        auto vstorage = cfd->current()->storage_info();
-        const int llevel = 1;
-        const int start_level = vstorage->ll_to_l_[llevel];
-        const int next_level = vstorage->ll_to_l_[llevel + 1];
-        int empty_levels = 0;
-        auto level = next_level - 1;
-        for (; level >= start_level; level--) {
-          bool empty = vstorage->files_[level].size() == 0;
-          if (empty) {
-            empty_levels++;
-          }
+      auto vstorage = cfd->current()->storage_info();
+      const int llevel = 1;
+      const int start_level = vstorage->ll_to_l_[llevel];
+      const int next_level = vstorage->ll_to_l_[llevel + 1];
+      int empty_levels = 0;
+      for (auto level = start_level; level < next_level; level++) {
+        bool empty = vstorage->files_[level].size() == 0;
+        if (empty) {
+          empty_levels++;
         }
-        // TODO(myabandeh): hack to avoid unavailable level 1 when the file is ready to be installed
-        if (empty_levels < 4) {
-          retry = true;
-        } else {
-          ROCKS_LOG_INFO(immutable_db_options_.info_log,
-                         "job_id: %d manifest: %lu", job_context->job_id,
-                         cfd->current()->version_set()->manifest_file_number());
-        }
-        }
-    } // for flush_req
+      }
+      // TODO(myabandeh): hack to avoid unavailable level 1 when the file is
+      // ready to be installed
+      if (empty_levels < 4) {
+        retry = true;
+      } else {
+        ROCKS_LOG_INFO(immutable_db_options_.info_log,
+                       "job_id: %d manifest: %lu", job_context->job_id,
+                       cfd->current()->version_set()->manifest_file_number());
+      }
+    }  // for flush_req
     if (retry) {
       bg_cv_.SignalAll();  // In case a waiter can proceed despite the error
       mutex_.Unlock();

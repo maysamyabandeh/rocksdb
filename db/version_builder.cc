@@ -333,10 +333,10 @@ class VersionBuilder::Rep {
     for (int level = 0; level < num_levels_; level++) {
       auto age = levels_[level].age;
       if (age) {
-        assert(base_vstorage_->age_[level] < age);
-        vstorage->age_[level] = age;
+        assert(base_vstorage_->level_age_[level] < age);
+        vstorage->level_age_[level] = age;
       } else {
-        vstorage->age_[level] = base_vstorage_->age_[level];
+        vstorage->level_age_[level] = base_vstorage_->level_age_[level];
       }
       const auto& cmp = (level == 0) ? level_zero_cmp_ : level_nonzero_cmp_;
       // Merge the set of added files with the set of pre-existing files.

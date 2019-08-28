@@ -138,10 +138,6 @@ CompactionPicker::~CompactionPicker() {}
 void CompactionPicker::ReleaseCompactionFiles(Compaction* c, Status status) {
   assert(c->output_gen_);
   UnregisterCompaction(c);
- //bool retargeted = false;
- //do {
- //  retargeted = RetargetConcurrentCompactions(c); 
- //} while (retargeted);
   if (!status.ok()) {
     c->ResetNextCompactionIndex();
   }
@@ -958,12 +954,12 @@ void CompactionPicker::RegisterCompaction(Compaction* c) {
     return;
   }
   SetLevelGeneration(c->output_level_, c->output_gen_);
+  // Print out some info before the follow-up assert crashes the process
   if (!(ioptions_.compaction_style != kCompactionStyleLevel ||
          c->output_level() == 0 ||
          !FilesRangeOverlapWithCompaction(*c->inputs(), c->output_level()))) {
     ROCKS_LOG_INFO(ioptions_.info_log, "ASSERT %d", c->output_level());
-    fflush(stdout);
-    printf("assert %d\n", c->output_level());
+    LogFlush(ioptions_.info_log);
     printf("assert %d\n", c->output_level());
     fflush(stdout);
   }
@@ -974,7 +970,8 @@ void CompactionPicker::RegisterCompaction(Compaction* c) {
       ioptions_.compaction_style == kCompactionStyleUniversal) {
     level0_compactions_in_progress_.insert(c);
   }
-    ROCKS_LOG_INFO(ioptions_.info_log, "compactions_in_progress_.insert %d", c->output_level());
+  ROCKS_LOG_DEBUG(ioptions_.info_log, "compactions_in_progress_.insert %d",
+                  c->output_level());
   compactions_in_progress_.insert(c);
 }
 
@@ -989,51 +986,6 @@ void CompactionPicker::UnregisterCompaction(Compaction* c) {
   compactions_in_progress_.erase(c);
     ROCKS_LOG_INFO(ioptions_.info_log, "compactions_in_progress_.erase %d", c->output_level());
 }
-
-/*
-bool CompactionPicker::LevelIsEmpty(VersionStorageInfo* vstorage, int level) {
-  if (vstorage->files_[level].size() > 0) {
-    return false;
-  }
-  for (Compaction* c : *compactions_in_progress()) {
-    if (c->output_level() == level) {
-      return false;
-    }
-  }
-  return true;
-}
-
-bool CompactionPicker::RetargetConcurrentCompactions(Compaction* c) {
-  assert(c);
-  auto c_ll = c->input_version()->l_to_ll_[c->output_level()];
-  if (c_ll <= 1) continue;
-  int new_output = 0;
-  for (Compaction* o : *compaction_picker_->compactions_in_progress()) {
-    if (o->final_level() >= 0) continue;
-    auto o_ll = c->input_version()->l_to_ll_[o->output_level()];
-    if (c_ll != o_ll + 1) {
-      continue;
-    }
-    auto start_l = c->input_version()->ll_to_l_[c_ll - 1];
-    auto end_l = c->input_version()->ll_to_l_[c_ll];
-    assert(start_l <= o->output_level());
-    assert(o->output_level() < end_l);
-    int new_output = 0;
-    for (auto l = o->output_level() + 1; l < end_l; l++) {
-      if (!LevelIsEmpty(o->input_version())) {
-        break;
-      }
-      new_output = l;
-    }
-    if (new_output != 0) {
-      c->set_final_level(new_output);
-      break;
-    }
-  }
-  bool retargeted = new_output != 0;
-  return retargeted;
-}
-*/
 
 void CompactionPicker::PickFilesMarkedForCompaction(
     const std::string& cf_name, VersionStorageInfo* vstorage, int* start_level,
@@ -1145,8 +1097,16 @@ class LevelCompactionBuilder {
 
   // Pick and return a compaction.
   Compaction* PickCompaction(LogBuffer* log_buffer);
+  // A level is empty if there is no file in it nor any in-progress compaction
+  // is writing to it.
   bool LevelIsEmpty(int level);
+  // A tiered level is movable if it has some files that is not already being
+  // compacted
+  bool LevelIsMovable(int level);
+  // A level is reserved if it has no files and yet some in-progress compaction
+  // is writing to it.
   bool LevelIsReserved(int level);
+  // True if there is an in-progress compaction from/to this level
   bool CompactionInProgress(int level);
 
   // Pick the initial files to compact to the next level. (or together
@@ -1198,7 +1158,10 @@ class LevelCompactionBuilder {
   CompactionInputFiles output_level_inputs_;
   std::vector<FileMetaData*> grandparents_;
   CompactionReason compaction_reason_ = CompactionReason::kUnknown;
-  
+
+  // The generation will determine how fresh are the data in the output level.
+  // This will clarify the first level in a logical level that should be looked
+  // into during read.
   size_t output_gen_ = 0;
 
   const MutableCFOptions& mutable_cf_options_;
@@ -1395,6 +1358,22 @@ bool LevelCompactionBuilder::LevelIsEmpty(int level) {
   return true;
 }
 
+// Assume the level is tiered or the tiered part of Level-N, i.e., if it has
+// files, then there will be no compaction targetting that level.
+bool LevelCompactionBuilder::LevelIsMovable(int level) {
+  // if it has no files, it is not movable
+  if (vstorage_->files_[level].size() == 0) {
+    return false;
+  }
+  // if the files are already being moved, it is not movable
+  for (auto* f : vstorage_->files_[level]) {
+    if (f->being_compacted) {
+      return false;
+    }
+  }
+  return true;
+}
+
 bool LevelCompactionBuilder::LevelIsReserved(int level) {
   if (vstorage_->files_[level].size() > 0) {
     return false;
@@ -1423,11 +1402,13 @@ bool LevelCompactionBuilder::CompactionInProgress(int level) {
 
 Compaction* LevelCompactionBuilder::PickCompaction(LogBuffer* log_buffer) {
   (void)log_buffer;
-  compaction_inputs_.clear();
 
   // check for trivial moves for Leveled-N
+  // Keep the first physical level of Leveled-N empty for follow-up compactions.
+  // This simplifies Leveled-N implementation by always targetting its first
+  // level as the target of compactions coming from the preivous level.
   compaction_inputs_.clear();
-  for (size_t i = 0; i <= vstorage_->llevel_type_.size(); i++) {
+  for (size_t i = 0; i < vstorage_->llevel_type_.size(); i++) {
     auto score = vstorage_->compaction_l_score_[i];
     size_t ll = vstorage_->compaction_l_level_[i];
     if (vstorage_->llevel_type_[ll] != 'N') {
@@ -1436,18 +1417,13 @@ Compaction* LevelCompactionBuilder::PickCompaction(LogBuffer* log_buffer) {
     int start_level = vstorage_->ll_to_l_[ll];
     int next_level = vstorage_->ll_to_l_[ll+1];
     if (score < 1) {  // the level is not ready for compaction
-        ROCKS_LOG_INFO(ioptions_.info_log, "Leveled-N L%d score %f too low", start_level, score);
+      ROCKS_LOG_DEBUG(ioptions_.info_log, "Leveled-N L%d score %f too low",
+                      start_level, score);
       continue;
     }
-    bool being_compacted = false;
-    for (auto* f : vstorage_->files_[start_level]) {
-      if (f->being_compacted) {
-        being_compacted = true;
-        break;
-      }
-    }
-    if (being_compacted) {
-        ROCKS_LOG_INFO(ioptions_.info_log, "Leveled-N L%d is being compacted", start_level);
+    if (!LevelIsMovable(start_level)) {
+      ROCKS_LOG_DEBUG(ioptions_.info_log, "Leveled-N L%d not movable",
+                      start_level);
       continue;
     }
     output_level_ = 0;
@@ -1456,7 +1432,7 @@ Compaction* LevelCompactionBuilder::PickCompaction(LogBuffer* log_buffer) {
         output_level_ = l;
         break;
       } else {
-        ROCKS_LOG_INFO(ioptions_.info_log, "Leveled-N L%d is full", l);
+        ROCKS_LOG_DEBUG(ioptions_.info_log, "Leveled-N L%d is full", l);
       }
     }
     if (output_level_) {
@@ -1478,81 +1454,23 @@ Compaction* LevelCompactionBuilder::PickCompaction(LogBuffer* log_buffer) {
     return c;
   }
 
-    // Check for trivial moves
-  if (0){
-  int next_level = 0;
-  for (int l = 1; l <= vstorage_->MaxInputLevel(); l = next_level) {
-    auto start_level = l;
-    auto start_llevel = vstorage_->l_to_ll_[start_level];
-    next_level = vstorage_->ll_to_l_[start_llevel + 1];
-    if (next_level == 0) {  // no next logical level
-      next_level = vstorage_->MaxInputLevel() + 1;
-    }
-    output_level_ = 0;
-    for (int level = next_level - 1; level >= start_level; level--) {
-      bool being_compacted = false;
-      bool empty = true;
-      for (auto* f : vstorage_->files_[level]) {
-        empty = false;
-        if (f->being_compacted) {
-          being_compacted = true;
-          break;
-        }
-      }
-      bool reserved = false;
-      for (Compaction* c : *compaction_picker_->compactions_in_progress()) {
-        if (c->output_level() == level) {
-          reserved = true;
-          break;
-        }
-      }
-      //ROCKS_LOG_INFO(ioptions_.info_log, "trivial verify %d: empty=%d being_compacted=%d reserved=%d", level, empty, being_compacted, reserved);
-      if (empty && !reserved) {
-        if (output_level_ == 0) {
-          output_level_ = level;
-        }
-      } else if (being_compacted || reserved) {
-        // reset
-        output_level_ = 0;
-      } else if (output_level_ != 0) {
-        // trivial move from level to output_level_
-        ROCKS_LOG_INFO(ioptions_.info_log, "trivial move from %d to %d",
-                       level, output_level_);
-        CompactionInputFiles level_inputs;
-        level_inputs.level = level;
-        level_inputs.files = vstorage_->files_[level];
-        compaction_inputs_.push_back(level_inputs);
-        break;
-      }
-    }
-    if (compaction_inputs_.empty()) {
-      continue;
-    }
-    assert(output_level_);
-    Compaction* c = GetCompaction();
-    c->set_is_trivial_move(true);
-    return c;
-  }
-  }
-
   // update the score based on ongoing compactions
+  // if the free slots are about to be filled by in-progress compactions, that
+  // should increase the compaction score.
   {
   bool updated = false;
-  for (int i = 0; i < compaction_picker_->NumberLevels() - 1; i++) {
-    auto ll = vstorage_->compaction_l_level_[i];
-    if (ll == 0) {
-      // ROCKS_LOG_INFO(ioptions_.info_log, "skip boost L%d it is L0", i);
-      continue;
-    }
+  for (size_t i = 0; i < vstorage_->compaction_l_level_.size(); i++) {
     auto score = vstorage_->compaction_l_score_[i];
     if (score < 1) {  // the level is not ready for compaction
-      //ROCKS_LOG_INFO(ioptions_.info_log, "skip boost LL%d score %f", i, score);
       continue;
     }
+    auto ll = vstorage_->compaction_l_level_[i];
+    assert(ll != 0);
+    assert((size_t)ll + 1 <
+           vstorage_->ll_to_l_.size());  // Last level is never the source
     if (vstorage_->llevel_max_runs_[ll] <= 1) {
-      // TODO(myabandeh): remove the log line
-      ROCKS_LOG_INFO(ioptions_.info_log,
-                     "skip boost LL%d not tiered", i, score);
+      ROCKS_LOG_DEBUG(ioptions_.info_log,
+                     "skip boost LL%d not tiered nor leveled-N", ll, score);
       continue;
     }
     auto start_level = vstorage_->ll_to_l_[ll];
@@ -1560,15 +1478,11 @@ Compaction* LevelCompactionBuilder::PickCompaction(LogBuffer* log_buffer) {
     for (auto l = start_level; l < next_level; l++) {
       if (LevelIsReserved(l)) {
         float add = 1.0 / vstorage_->llevel_max_runs_[ll];
-        // TODO(myabandeh): remove the log line
         ROCKS_LOG_INFO(ioptions_.info_log,
-                       "boosting L%d score from %f by %f", l,
+                       "boosting L%d score from %f by %f", ll,
                        score, add);
         vstorage_->compaction_l_score_[i] += add;
-        //ROCKS_LOG_INFO(ioptions_.info_log, "boosting L%d new score %f", l, vstorage_->compaction_l_score_[i]);
         updated = true;
-      } else {
-        //ROCKS_LOG_INFO(ioptions_.info_log, "skip boost L%d not reserved", l);
       }
     }
   }
@@ -1593,148 +1507,148 @@ Compaction* LevelCompactionBuilder::PickCompaction(LogBuffer* log_buffer) {
   }
   }
 
-  assert(compaction_inputs_.empty());
-  bool tiered = true;
-  for (int i = 0; i < compaction_picker_->NumberLevels() - 1; i++) {
+  bool tiered = true; // tiered compaction
+  for (size_t i = 0; i < vstorage_->compaction_l_score_.size(); i++) {
+    assert(compaction_inputs_.empty());
     start_level_score_ = vstorage_->compaction_l_score_[i];
     if (start_level_score_ <= 1) {
-      // TODO(myabandeh): remove the log line
       ROCKS_LOG_INFO(ioptions_.info_log, "Skip compaction higeset score: %f", start_level_score_);
       break;
     }
-    auto start_llevel = vstorage_->compaction_l_level_[i];
-    auto start_level = vstorage_->ll_to_l_[start_llevel];
+    auto ll = vstorage_->compaction_l_level_[i];
+    assert(ll != 0);
+    assert((size_t)ll + 1 <
+           vstorage_->ll_to_l_.size());  // Last level is never the source
+    auto start_level = vstorage_->ll_to_l_[ll];
     assert(start_level); // no longer no L0
-    auto next_level = vstorage_->ll_to_l_[start_llevel+1];
+    auto next_level = vstorage_->ll_to_l_[ll+1];
     assert(next_level);
+    // For Leveled and Leveled-N, the next immediate level is the output level.
+    // For Leveled-N we make sure this level is empty by doing trivial moves
+    // above. For tiered, output_level_ will be updated below.
     output_level_ = next_level;
-    //tiered = vstorage_->llevel_max_runs_[start_llevel+1] > 1;
-    tiered = vstorage_->llevel_type_[start_llevel+1] == 'T';
+    tiered = vstorage_->llevel_type_[ll] == 'T' &&
+             vstorage_->llevel_type_[ll + 1] == 'T';
 
-    // TODO(myabandeh): remove the log line
-    ROCKS_LOG_INFO(ioptions_.info_log, "i=%d tiered=%d start_llevel=%d start_level=%d next_level=%d output_level_=%d", i, tiered, start_llevel, start_level, next_level, output_level_);
-    if (tiered) {
-    if (!LevelIsEmpty(output_level_)) {
-      for (int nl = next_level + 1; nl < ioptions_.num_levels; nl++) {
-        if (vstorage_->l_to_ll_[nl] != (start_llevel + 1)) {
-          break;
-        }
-        if (LevelIsEmpty(nl)) {
-          ROCKS_LOG_ERROR(
-              ioptions_.info_log,
-              "Incorrect Hack: change output level from %d to %d",
-              output_level_, nl);
-          output_level_ = nl;
-          break;
-        }
-      }
-      if (!LevelIsEmpty(output_level_)) {
-        ROCKS_LOG_WARN(ioptions_.info_log,
-                       "Skip compaction next level %d has %zu files",
-                       output_level_, vstorage_->files_[output_level_].size());
-        continue;
-      }
-    }
-    //ROCKS_LOG_INFO(ioptions_.info_log, "next level from ? to %d", output_level_);
-    for (int nl = output_level_ + 1; nl < ioptions_.num_levels; nl++) {
-      if (vstorage_->l_to_ll_[nl] != (start_llevel + 1)) {
-        break;
-      }
-      if (!LevelIsEmpty(nl)) {
-        break;
-      }
-      //ROCKS_LOG_INFO(ioptions_.info_log, "next level from %d to %d", output_level_, nl);
-      output_level_ = nl;
-    }
-    } else {// leveled
+    ROCKS_LOG_DEBUG(ioptions_.info_log, "i=%d tiered=%d ll=%d start_level=%d next_level=%d output_level_=%d", i, tiered, ll, start_level, next_level, output_level_);
+    if (!tiered) {  // leveled or levled-N
       if (CompactionInProgress(output_level_)) {
-        ROCKS_LOG_INFO(ioptions_.info_log, "Skip leveled to L%d: compaction in progress", output_level_);
+        ROCKS_LOG_INFO(
+            ioptions_.info_log,
+            "Skip leveled or Leveled-N to L%d: compaction in progress",
+            output_level_);
         continue;
       }
+    } else { // try to find an empty output_level_
+      if (!LevelIsEmpty(output_level_)) {
+        for (int nl = next_level + 1; nl < ioptions_.num_levels; nl++) {
+          if (vstorage_->l_to_ll_[nl] != (ll + 1)) {
+            break;
+          }
+          if (LevelIsEmpty(nl)) {
+            ROCKS_LOG_DEBUG(ioptions_.info_log,
+                            "Change output level from %d to %d",
+                            output_level_, nl);
+            output_level_ = nl;
+            break;
+          }
+        }
+        if (!LevelIsEmpty(output_level_)) {
+          ROCKS_LOG_WARN(ioptions_.info_log,
+                         "Skip compaction found no free slot in LL %d\n",
+                         ll + 1);
+          continue;
+        }
+      }
     }
-    size_t max_gen = 0;
+    
+    // We have a target level. Figure it is age.
+    assert(output_level_);
+    // TODO(myabandeh): Not sure if this case is necessary to avoid as we
+    // already sort all the levels based on their age at read time.
+    // We need to
+    // make sure that no-inprogress compaction would generate files at the same
+    // logical level with lower age
+    size_t min_gen = 0;
     for (int level = start_level; level < next_level; level++) {
       bool reserved = LevelIsReserved(level);
       if (reserved) {
         auto gen = compaction_picker_->generation(level);
-        max_gen = max_gen == 0 ? gen : std::min(max_gen, gen);
+        min_gen = min_gen == 0 ? gen : std::min(min_gen, gen);
       }
     }
+
+    // Collect inputs
     output_gen_ = 0;
     for (int level = start_level; level < next_level; level++) {
+      assert(level !=0);
+      if (!LevelIsMovable(level)) {
+        continue;
+      }
       CompactionInputFiles level_inputs;
       level_inputs.level = level;
-      if (level != 0) {
-        bool being_compacted = false;
-        bool empty = true;
-        for (auto* f : vstorage_->files_[level]) {
-          empty = false;
-          if (f->being_compacted) {
-            being_compacted = true;
-            break;
-          }
-        }
-        if (empty || being_compacted) {
-          continue;
-        }
-        level_inputs.files = vstorage_->files_[level];
-      } else {
-        // only add not being compacted files
-        for (auto* f : vstorage_->files_[level]) {
-          if (!f->being_compacted) {
-            level_inputs.files.push_back(f);
-          }
-        }
-        assert(!level_inputs.files.empty());
-      }
+      level_inputs.files = vstorage_->files_[level];
+
       auto level_gen = compaction_picker_->generation(level);
       assert(level_gen);
-      if (max_gen && max_gen <= level_gen) {
-      ROCKS_LOG_INFO(ioptions_.info_log, "skip level %d with gen %zu to avoid compaction gap by gen %zu", level, level_gen, max_gen);
-      continue;
+      if (min_gen && min_gen <= level_gen) {
+        ROCKS_LOG_INFO(
+            ioptions_.info_log,
+            "skip level %d with gen %zu to avoid compaction gap by gen %zu",
+            level, level_gen, min_gen);
+        continue;
       }
       output_gen_ = std::max(output_gen_, level_gen);
       compaction_inputs_.push_back(level_inputs);
-      // TODO(myabandeh): remove the log line
-      ROCKS_LOG_INFO(ioptions_.info_log, "compaction_inputs_ push_back: %zu files from level %d", level_inputs.files.size(), level_inputs.level);
+      ROCKS_LOG_DEBUG(ioptions_.info_log,
+                      "compaction_inputs_ push_back: %zu files from level %d",
+                      level_inputs.files.size(), level_inputs.level);
     }
     if (compaction_inputs_.empty()) {
-       // TODO(myabandeh): remove the log line
-       ROCKS_LOG_INFO(ioptions_.info_log, "skip compaction score %f level %d due to empty input", start_level_score_, start_llevel);
-       continue;
+      ROCKS_LOG_WARN(ioptions_.info_log,
+                      "skip compaction score %f level %d due to empty input",
+                      start_level_score_, ll);
+      continue;
     }
+
     // TODO(myabandeh): skip if two few sorted runs
     assert(output_gen_);
-    if (!tiered && !LevelIsEmpty(output_level_)) { // include output in input
+    if (!LevelIsEmpty(output_level_)) { // include output in input
+      assert(!tiered);
       CompactionInputFiles level_inputs;
       level_inputs.level = output_level_;
-      output_gen_ = std::max(output_gen_, compaction_picker_->generation(output_level_));
+      output_gen_ =
+          std::max(output_gen_, compaction_picker_->generation(output_level_));
       level_inputs.files = vstorage_->files_[output_level_];
       // TODO(myabandeh): remove the log line
       ROCKS_LOG_INFO(ioptions_.info_log, "compaction_inputs_ push_back: %zu files from level %d", level_inputs.files.size(), level_inputs.level);
       compaction_inputs_.push_back(level_inputs);
     }
     assert(output_gen_);
-    // TODO(myabandeh): remove the log line
-    ROCKS_LOG_INFO(ioptions_.info_log, "compaction score: %f to %d", start_level_score_, output_level_);
 
+    ROCKS_LOG_INFO(ioptions_.info_log, "compaction score: %f to %d", start_level_score_, output_level_);
     break;
   }
   if (compaction_inputs_.empty()) {
     return nullptr;
   }
+
   {
-  assert(compaction_inputs_.size() != 1 || !tiered);
-  bool trivial_move = !tiered && compaction_inputs_.size() == 1;
-  if (trivial_move) {
-    ROCKS_LOG_WARN(ioptions_.info_log, "Unexpected trivial move from %d to %d It is OK if rare", compaction_inputs_[0].level, output_level_);
-  }
-  Compaction* c = GetCompaction();
-  if (trivial_move) {
-    c->set_is_trivial_move(true);
-    ROCKS_LOG_INFO(ioptions_.info_log, "mark trivial move to L%d", output_level_);
-  }
-  return c;
+    // TODO(myabandeh): not sure about !tiered
+    assert(compaction_inputs_.size() != 1 || !tiered);
+    bool trivial_move = !tiered && compaction_inputs_.size() == 1;
+    if (trivial_move) {
+      ROCKS_LOG_WARN(ioptions_.info_log,
+                     "Unexpected trivial move from %d to %d It is OK if rare",
+                     compaction_inputs_[0].level, output_level_);
+    }
+    Compaction* c = GetCompaction();
+    if (trivial_move) {
+      c->set_is_trivial_move(true);
+      ROCKS_LOG_INFO(ioptions_.info_log, "mark trivial move to L%d",
+                     output_level_);
+    }
+    return c;
   }
 
   // Pick up the first file to start compaction. It may have been extended
