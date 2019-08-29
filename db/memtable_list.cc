@@ -365,7 +365,7 @@ Status MemTableList::InstallMemtableFlushResults(
     size_t batch_count = 0;
     autovector<VersionEdit*> edit_list;
     autovector<MemTable*> memtables_to_flush;
-    autovector<std::pair<int, size_t>> age_updates;
+    std::vector<std::pair<int, size_t>> age_updates;
     // enumerate from the last (earliest) element to see how many batch finished
     for (auto it = memlist.rbegin(); it != memlist.rend(); ++it) {
       MemTable* m = *it;
@@ -378,7 +378,8 @@ Status MemTableList::InstallMemtableFlushResults(
                          "[%s] Level-0 commit table #%" PRIu64 " started",
                          cfd->GetName().c_str(), m->file_number_);
         edit_list.push_back(&m->edit_);
-        age_updates.push_back(m->edit_.age_update_);
+        age_updates.insert(age_updates.end(), m->edit_.age_updates_.begin(),
+                           m->edit_.age_updates_.end());
         memtables_to_flush.push_back(m);
       }
       batch_count++;

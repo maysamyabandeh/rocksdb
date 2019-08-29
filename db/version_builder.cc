@@ -268,13 +268,12 @@ class VersionBuilder::Rep {
   void Apply(VersionEdit* edit) {
     CheckConsistency(base_vstorage_);
 
-    {
-      int level = edit->age_update_.first;
-      size_t age = edit->age_update_.second;
-      if (age) {
-        assert(level);
-        levels_[level].age = age;
-      }
+    for (auto age_update: edit->age_updates_) {
+      int level = age_update.first;
+      size_t age = age_update.second;
+      assert(age);
+      assert(level);
+      levels_[level].age = age;
     }
 
     // Delete files

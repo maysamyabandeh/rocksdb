@@ -3471,8 +3471,8 @@ Status VersionSet::ApplyOneVersionEdit(
     *have_last_sequence = true;
   }
   
-  if (edit.age_update_ != AgeUpdate(0,0)) {
-    (*cf_level_age)[edit.column_family_][edit.age_update_.first] = edit.age_update_.second;
+  for (auto age_update: edit.age_updates_) {
+    (*cf_level_age)[edit.column_family_][age_update.first] = age_update.second;
   }
   return Status::OK();
 }
@@ -4032,8 +4032,8 @@ Status VersionSet::DumpManifest(Options& options, std::string& dscname,
         have_last_sequence = true;
       }
 
-      if (edit.age_update_ != AgeUpdate(0,0)) {
-        cf_level_age_[edit.column_family_][edit.age_update_.first] = edit.age_update_.second;
+      for (auto age_update: edit.age_updates_) {
+        cf_level_age_[edit.column_family_][age_update.first] = age_update.second;
       }
 
       if (edit.has_max_column_family_) {

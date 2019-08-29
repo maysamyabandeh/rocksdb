@@ -88,7 +88,7 @@ void VersionEdit::Clear() {
   column_family_name_.clear();
   is_in_atomic_group_ = false;
   remaining_entries_ = 0;
-  age_update_ = {0,0};
+  age_updates_ = {};
 }
 
 bool VersionEdit::EncodeTo(std::string* dst) const {
@@ -212,8 +212,8 @@ bool VersionEdit::EncodeTo(std::string* dst) const {
     PutVarint32(dst, remaining_entries_);
   }
   
-  if (age_update_ != AgeUpdate(0,0)) {
-    PutVarint32Varint32Varint32(dst, kLevelAge, age_update_.first, age_update_.second);
+  for (auto age_update: age_updates_) {
+    PutVarint32Varint32Varint32(dst, kLevelAge, age_update.first, age_update.second);
   }
   return true;
 }
@@ -371,7 +371,7 @@ Status VersionEdit::DecodeFrom(const Slice& src) {
         uint32_t tmplevel;
         uint32_t tmpage;
         if (GetVarint32(&input, &tmplevel) && GetVarint32(&input, &tmpage)) {
-          age_update_ = {tmplevel, tmpage};
+          age_updates_.push_back({tmplevel, tmpage});
           //has_last_sequence_ = true;
         } else {
           msg = "age update";
@@ -561,11 +561,11 @@ std::string VersionEdit::DebugString(bool hex_key) const {
     r.append("\n  LastSeq: ");
     AppendNumberTo(&r, last_sequence_);
   }
-  if (age_update_ != AgeUpdate(0,0)) {
+  for (auto age_update: age_updates_) {
     r.append("\n  LevelAge: ");
-    AppendNumberTo(&r, age_update_.first);
+    AppendNumberTo(&r, age_update.first);
     r.append(" => ");
-    AppendNumberTo(&r, age_update_.second);
+    AppendNumberTo(&r, age_update.second);
   }
   for (DeletedFileSet::const_iterator iter = deleted_files_.begin();
        iter != deleted_files_.end();
@@ -629,9 +629,9 @@ std::string VersionEdit::DebugJSON(int edit_num, bool hex_key) const {
   if (has_last_sequence_) {
     jw << "LastSeq" << last_sequence_;
   }
-  if (age_update_ != AgeUpdate(0,0)) {
-    jw << "LevelAgeLevel" << age_update_.first;
-    jw << "LevelAgeAge" << age_update_.second;
+  for (auto age_update: age_updates_) {
+    jw << "LevelAgeLevel" << age_update.first;
+    jw << "LevelAgeAge" << age_update.second;
   }
 
   if (!deleted_files_.empty()) {
