@@ -4178,6 +4178,13 @@ Status VersionSet::WriteSnapshot(log::Writer* log) {
                        f->marked_for_compaction);
         }
       }
+      auto& level_age = cfd->current()->storage_info()->level_age_;
+      for (size_t level = 0; level < level_age.size(); level++) {
+        auto age = level_age[level];
+        if (age) {
+          edit.UpdateAge(level, age);
+        }
+      }
       edit.SetLogNumber(cfd->GetLogNumber());
       std::string record;
       if (!edit.EncodeTo(&record)) {

@@ -872,6 +872,9 @@ Status DBImpl::RecoverLogFiles(const std::vector<uint64_t>& log_numbers,
       versions_->MarkFileNumberUsed(max_log_number + 1);
       status = versions_->LogAndApply(
           cfd, *cfd->GetLatestMutableCFOptions(), edit, &mutex_);
+      for (auto update: edit->age_updates_) {
+        cfd->compaction_picker()->ReleaseLL1(update.first, update.second);
+      }
       if (!status.ok()) {
         // Recovery failed
         break;
