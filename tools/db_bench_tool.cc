@@ -4731,7 +4731,7 @@ void VerifyDBFromDB(std::string& truth_db_name) {
         exit(1);
       }
       bytes += key.size() + value_size_;
-      thread->stats.FinishedOps(&db_, db_.db, 1, kWrite);
+      //thread->stats.FinishedOps(&db_, db_.db, 1, kWrite);
 
       if (FLAGS_benchmark_write_rate_limit > 0) {
         write_rate_limiter->Request(
@@ -4739,7 +4739,7 @@ void VerifyDBFromDB(std::string& truth_db_name) {
             nullptr /* stats */, RateLimiter::OpType::kWrite);
       }
     }
-    thread->stats.AddBytes(bytes);
+    //thread->stats.AddBytes(bytes);
   }
 
   void ReadWhileScanning(ThreadState* thread) {
