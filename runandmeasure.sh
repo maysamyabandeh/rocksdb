@@ -38,7 +38,7 @@ vmstat 1 >& vr.$sfx &
 vpid=$!
 iostat -kx 1 >& ir.$sfx &
 ipid=$!
-$bin --benchmarks="readrandom,stats" --use_existing_db=1 --db=$dbdir --duration=60 $defargs $myargs >& or.$sfx
+$bin --benchmarks="readrandom,stats" --use_existing_db=1 --db=$dbdir --num=$nw --duration=60 $defargs $myargs >& or.$sfx
 kill $vpid
 kill $ipid
 du -hs $dbdir > dr.$sfx
@@ -49,7 +49,7 @@ vmstat 1 >& vt.$sfx &
 vpid=$!
 iostat -kx 1 >& it.$sfx &
 ipid=$!
-$bin --benchmarks="readwhilewriting,stats" --use_existing_db=1 --db=$dbdir --duration=120 $defargs $myargs >& ot.$sfx
+$bin --benchmarks="readwhilewriting,stats" --use_existing_db=1 --db=$dbdir --num=$nw --duration=120 $defargs $myargs >& ot.$sfx
 kill $vpid
 kill $ipid
 du -hs $dbdir > dt.$sfx
