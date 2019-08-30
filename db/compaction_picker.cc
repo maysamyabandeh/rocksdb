@@ -1104,7 +1104,7 @@ class LevelCompactionBuilder {
   // compacted
   bool LevelIsMovable(int level);
   // A level is reserved if it has no files and yet some in-progress compaction
-  // is writing to it.
+  // is writing to it or it is reserved for an upcoming flush.
   bool LevelIsReserved(int level);
   // True if there is an in-progress compaction from/to this level
   bool CompactionInProgress(int level);
@@ -1378,6 +1378,9 @@ bool LevelCompactionBuilder::LevelIsReserved(int level) {
   if (vstorage_->files_[level].size() > 0) {
     return false;
   }
+  if (compaction_picker_->IsReserveLL1(level)) {
+    return true;
+  }
   for (Compaction* c : *compaction_picker_->compactions_in_progress()) {
     if (c->output_level() == level) {
       return true;
@@ -1409,13 +1412,22 @@ Compaction* LevelCompactionBuilder::PickCompaction(LogBuffer* log_buffer) {
   // level as the target of compactions coming from the preivous level.
   compaction_inputs_.clear();
   for (size_t i = 0; i < vstorage_->llevel_type_.size(); i++) {
-    auto score = vstorage_->compaction_l_score_[i];
     size_t ll = vstorage_->compaction_l_level_[i];
     if (vstorage_->llevel_type_[ll] != 'N') {
       continue;
     }
     int start_level = vstorage_->ll_to_l_[ll];
     int next_level = vstorage_->ll_to_l_[ll+1];
+    // check if the first sorted run of leveled-N is big enough
+    uint64_t level_bytes_no_compacting = 0;
+    for (auto f : vstorage_->files_[start_level]) {
+      if (!f->being_compacted) {
+        level_bytes_no_compacting += f->compensated_file_size;
+      }
+    }
+    auto score = static_cast<double>(level_bytes_no_compacting) /
+                 vstorage_->MaxBytesForLevel(start_level);
+
     if (score < 1) {  // the level is not ready for compaction
       ROCKS_LOG_DEBUG(ioptions_.info_log, "Leveled-N L%d score %f too low",
                       start_level, score);
@@ -1436,7 +1448,8 @@ Compaction* LevelCompactionBuilder::PickCompaction(LogBuffer* log_buffer) {
       }
     }
     if (output_level_) {
-      ROCKS_LOG_INFO(ioptions_.info_log, "Leveled-N trivial move from %d to %d",
+      ROCKS_LOG_INFO(ioptions_.info_log,
+                     "Leveled-N score=%f trivial move from %d to %d", score,
                      start_level, output_level_);
       auto level_gen = compaction_picker_->generation(start_level);
       output_gen_ = level_gen;
@@ -1466,13 +1479,11 @@ Compaction* LevelCompactionBuilder::PickCompaction(LogBuffer* log_buffer) {
     }
     auto ll = vstorage_->compaction_l_level_[i];
     assert(ll != 0);
-    assert((size_t)ll + 1 <
-           vstorage_->ll_to_l_.size());  // Last level is never the source
-    if (vstorage_->llevel_max_runs_[ll] <= 1) {
-      ROCKS_LOG_DEBUG(ioptions_.info_log,
-                     "skip boost LL%d not tiered nor leveled-N", ll, score);
+    if (vstorage_->llevel_type_[ll] != 'T') {
       continue;
     }
+    assert((size_t)ll + 1 <
+           vstorage_->ll_to_l_.size());  // Last level is never the source
     auto start_level = vstorage_->ll_to_l_[ll];
     auto next_level = vstorage_->ll_to_l_[ll+1];
     for (auto l = start_level; l < next_level; l++) {
@@ -1487,10 +1498,35 @@ Compaction* LevelCompactionBuilder::PickCompaction(LogBuffer* log_buffer) {
     }
   }
 
+  double max_t_score = 0;
+  for (size_t i = 0; i < vstorage_->compaction_l_score_.size(); i++) {
+    auto score = vstorage_->compaction_l_score_[i];
+    auto ll = vstorage_->compaction_l_level_[i];
+    if (score >= 1 && vstorage_->llevel_type_[ll] == 'T') {
+      ROCKS_LOG_INFO(ioptions_.info_log, "priotorizing L%d score from %f by %f",
+                     ll, score, 1.0 / ll);
+      vstorage_->compaction_l_score_[i] += 1.0 / ll;  // prio upper levels
+    }
+    max_t_score = std::max(max_t_score, vstorage_->compaction_l_score_[i]);
+  }
+  if (max_t_score > 1.4) {  // limit t score to be compatable with l score
+    for (size_t i = 0; i < vstorage_->compaction_l_score_.size(); i++) {
+      auto score = vstorage_->compaction_l_score_[i];
+      auto ll = vstorage_->compaction_l_level_[i];
+      if (score > 1 && vstorage_->llevel_type_[ll] == 'T') {
+        vstorage_->compaction_l_score_[i] = 1 + score / max_t_score * 0.4;
+        ROCKS_LOG_DEBUG(ioptions_.info_log,
+                        "Normalizing L%d score from %f to %f", ll, score,
+                        vstorage_->compaction_l_level_[i]);
+      }
+    }
+    updated = true;
+  }
+
   if (updated) {
     // sort all the levels based on their score. Higher scores get listed
     // first. Use bubble sort because the number of entries are small.
-    auto num_llevels = compaction_picker_->NumberLevels();
+    auto num_llevels = (int)vstorage_->compaction_l_score_.size();
     for (int i = 0; i < num_llevels - 2; i++) {
       for (int j = i + 1; j < num_llevels - 1; j++) {
         if (vstorage_->compaction_l_score_[i] <
@@ -1503,6 +1539,13 @@ Compaction* LevelCompactionBuilder::PickCompaction(LogBuffer* log_buffer) {
           vstorage_->compaction_l_level_[j] = level;
         }
       }
+    }
+    ROCKS_LOG_WARN(ioptions_.info_log,
+                   "UPDATED_SCORE (num level=%zu):", num_llevels - 1);
+    for (int i = 0; i < num_llevels; i++) {
+      ROCKS_LOG_WARN(ioptions_.info_log, "LL%zu: %f",
+                     vstorage_->compaction_l_level_[i],
+                     vstorage_->compaction_l_score_[i]);
     }
   }
   }

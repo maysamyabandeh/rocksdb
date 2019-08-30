@@ -1725,8 +1725,8 @@ void VersionStorageInfo::ComputeAdaptiveCompactionScore(
     }
     const bool level_l = llevel_type_[ll] == 'L';
     // The last sorted run in leveled-N
-    const bool last_level_n = llevel_type_[ll] == 'N' && ll_to_l_[ll+1] == level+1;
-    if (level_l || last_level_n) {
+    const bool first_in_level_n = llevel_type_[ll] == 'N' && ll_to_l_[ll] == level;
+    if (level_l || first_in_level_n) {
       // Compute the ratio of current size to size limit.
       uint64_t level_bytes_no_compacting = 0;
       for (auto f : files_[level]) {
@@ -1736,13 +1736,14 @@ void VersionStorageInfo::ComputeAdaptiveCompactionScore(
       }
       double score = static_cast<double>(level_bytes_no_compacting) /
               MaxBytesForLevel(level);
+      if (level_l) {
       compaction_l_score_[ll] += score;
-    }
-  }
-
-  for (size_t i = 1; i < num_llevels; i++) {
-    if (compaction_l_score_[i] > 1) {
-      compaction_l_score_[i] += 1.0 / i; // prio upper levels
+      } else if (score > 1) { // only if the first leveled-N is full
+        // The score of Leveled-N is: 1 if all sorted runs have something, plus
+        // the ratio that the first sorted run is over-sized.
+        assert(first_in_level_n);
+      compaction_l_score_[ll] += (score-1);
+      }
     }
   }
 
