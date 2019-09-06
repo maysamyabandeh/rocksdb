@@ -1,5 +1,5 @@
-base=exprtmp
-output=output-tmp.txt
+base=${base:-exprtmp}
+output=${output:-output-tmp.txt}
 echo -e "conf\tfill rMB/s\tfill wMB/s\tfill ops\tfill cpu/q\tread rMB/s\tread wMB/s\tread ops\tread cpu/q\ttran rMB/s\ttran wMB/s\ttran ops\ttran cpu/q" > $output
 
 for d in `ls $base`; do
