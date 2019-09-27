@@ -11,6 +11,10 @@
 #define __STDC_FORMAT_MACROS
 #endif
 
+#include <chrono>
+#include <future>
+#include "util/cpu.h"
+
 #ifdef GFLAGS
 #ifdef NUMA
 #include <numa.h>
@@ -2452,6 +2456,34 @@ void VerifyDBFromDB(std::string& truth_db_name) {
       exit(1);
     }
     Open(&open_options_);
+    auto info_log = db_.db->GetOptions(db_.db->DefaultColumnFamily()).info_log;
+    std::function<void(std::future<void>)> printcpu =
+        [&](std::future<void> futureObj) {
+          uint64_t sleep_ms = 60000;
+          uint64_t last_bytes = 0;
+          do {
+            auto usage = getCurrentValue();
+            float write_rate = 0;
+            int64_t conf_rate = 0;
+            float write_usage = 0;
+            if (open_options_.rate_limiter) {
+              auto bytes = open_options_.rate_limiter->GetTotalBytesThrough();
+              write_rate = (bytes - last_bytes) * 1000 / (float)sleep_ms;
+              last_bytes = bytes;
+              conf_rate = open_options_.rate_limiter->GetBytesPerSecond();
+              write_usage = write_rate / conf_rate * 100;
+            }
+            printf("cpu usage %f write rate: %f : %f < %ld\n", usage,
+                   write_usage, write_rate, conf_rate);
+            ROCKS_LOG_WARN(info_log, "cpu usage %f write rate: %f : %f < %ld\n",
+                           usage, write_usage, write_rate, conf_rate);
+          } while (futureObj.wait_for(std::chrono::milliseconds(sleep_ms)) ==
+                   std::future_status::timeout);
+        };
+    std::promise<void> exitSignal;
+    std::future<void> futureObj = exitSignal.get_future();
+    port::Thread cputhread = port::Thread(printcpu, std::move(futureObj));
+
     PrintHeader();
     std::stringstream benchmark_stream(FLAGS_benchmarks);
     std::string name;
@@ -2791,6 +2823,8 @@ void VerifyDBFromDB(std::string& truth_db_name) {
                   ->ToString()
                   .c_str());
     }
+    exitSignal.set_value();
+    cputhread.join();
   }
 
  private:
