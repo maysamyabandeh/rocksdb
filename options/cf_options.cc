@@ -66,11 +66,6 @@ ImmutableCFOptions::ImmutableCFOptions(const ImmutableDBOptions& db_options,
       new_table_reader_for_compaction_inputs(
           db_options.new_table_reader_for_compaction_inputs),
       num_levels(cf_options.num_levels),
-      num_logical_levels(cf_options.num_logical_levels),
-      rpl(cf_options.rpl),
-      rpl_multiplier(cf_options.rpl_multiplier),
-      fanout(cf_options.fanout),
-      level_type(cf_options.level_type),
       optimize_filters_for_hits(cf_options.optimize_filters_for_hits),
       force_consistency_checks(cf_options.force_consistency_checks),
       allow_ingest_behind(db_options.allow_ingest_behind),
@@ -223,6 +218,38 @@ void MutableCFOptions::Dump(Logger* log) const {
                  compaction_options_fifo.ttl);
   ROCKS_LOG_INFO(log, "compaction_options_fifo.allow_compaction : %d",
                  compaction_options_fifo.allow_compaction);
+
+  ROCKS_LOG_INFO(log, "num_logical_levels : %zu",
+                 num_logical_levels);
+
+  result = "";
+  char charbuf[100];
+  for (const auto m : rpl) {
+    snprintf(charbuf, sizeof(charbuf), "%zu, ", m);
+    result += charbuf;
+  }
+  ROCKS_LOG_INFO(log, "rpl: %s", result.c_str());
+  result = "";
+
+  for (const auto m : rpl_multiplier) {
+    snprintf(charbuf, sizeof(charbuf), "%zu, ", m);
+    result += charbuf;
+  }
+  ROCKS_LOG_INFO(log, "rpl_multiplier: %s", result.c_str());
+  result = "";
+
+  for (const auto m : fanout) {
+    snprintf(charbuf, sizeof(charbuf), "%zu, ", m);
+    result += charbuf;
+  }
+  ROCKS_LOG_INFO(log, "fanout: %s", result.c_str());
+  result = "";
+
+  for (const auto m : level_type) {
+    snprintf(charbuf, sizeof(charbuf), "%c, ", m);
+    result += charbuf;
+  }
+  ROCKS_LOG_INFO(log, "level_type: %s", result.c_str());
 }
 
 MutableCFOptions::MutableCFOptions(const Options& options)

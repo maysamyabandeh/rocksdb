@@ -292,6 +292,12 @@ struct ColumnFamilyOptions : public AdvancedColumnFamilyOptions {
   // Default: empty
   std::vector<DbPath> cf_paths;
 
+  size_t num_logical_levels = 0;
+  std::vector<size_t> rpl;
+  std::vector<size_t> rpl_multiplier;
+  std::vector<size_t> fanout;
+  std::vector<char> level_type;
+
   // Create ColumnFamilyOptions with default values for all fields
   ColumnFamilyOptions();
   // Create ColumnFamilyOptions from Options

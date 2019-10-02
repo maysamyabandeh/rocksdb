@@ -101,13 +101,6 @@ struct ImmutableCFOptions {
 
   int num_levels;
 
-  // adaptive lsm
-  int num_logical_levels;
-  std::vector<size_t> rpl;
-  std::vector<size_t> rpl_multiplier;
-  std::vector<size_t> fanout;
-  std::vector<char> level_type;
-
   bool optimize_filters_for_hits;
 
   bool force_consistency_checks;
@@ -163,7 +156,13 @@ struct MutableCFOptions {
             options.max_sequential_skip_in_iterations),
         paranoid_file_checks(options.paranoid_file_checks),
         report_bg_io_stats(options.report_bg_io_stats),
-        compression(options.compression) {
+        compression(options.compression),
+        num_logical_levels(options.num_logical_levels),
+        rpl(options.rpl),
+        rpl_multiplier(options.rpl_multiplier),
+        fanout(options.fanout),
+        level_type(options.level_type)
+  {
     RefreshDerivedOptions(options.num_levels, options.compaction_style);
   }
 
@@ -192,7 +191,13 @@ struct MutableCFOptions {
         max_sequential_skip_in_iterations(0),
         paranoid_file_checks(false),
         report_bg_io_stats(false),
-        compression(Snappy_Supported() ? kSnappyCompression : kNoCompression) {}
+        compression(Snappy_Supported() ? kSnappyCompression : kNoCompression),
+        num_logical_levels(0),
+        rpl(0),
+        rpl_multiplier(0),
+        fanout(0),
+        level_type(0)
+        {}
 
   explicit MutableCFOptions(const Options& options);
 
@@ -245,6 +250,13 @@ struct MutableCFOptions {
   bool paranoid_file_checks;
   bool report_bg_io_stats;
   CompressionType compression;
+
+  // adaptive lsm
+  size_t num_logical_levels;
+  std::vector<size_t> rpl;
+  std::vector<size_t> rpl_multiplier;
+  std::vector<size_t> fanout;
+  std::vector<char> level_type;
 
   // Derived options
   // Per-level target file size.

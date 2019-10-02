@@ -338,6 +338,10 @@ size_t ParseSizeT(const std::string& value) {
   return static_cast<size_t>(ParseUint64(value));
 }
 
+char ParseCharT(const std::string& value) {
+  return value[0];
+}
+
 std::vector<int> ParseVectorInt(const std::string& value) {
   std::vector<int> result;
   size_t start = 0;

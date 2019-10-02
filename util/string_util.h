@@ -119,6 +119,8 @@ double ParseDouble(const std::string& value);
 
 size_t ParseSizeT(const std::string& value);
 
+char ParseCharT(const std::string& value);
+
 std::vector<int> ParseVectorInt(const std::string& value);
 
 bool SerializeIntVector(const std::vector<int>& vec, std::string* value);

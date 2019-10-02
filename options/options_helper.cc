@@ -286,7 +286,7 @@ bool SerializeVectorSizeT(const std::vector<size_t>& types,
   std::stringstream ss;
   for (size_t i = 0; i < types.size(); ++i) {
     if (i > 0) {
-      ss << ':';
+      ss << ',';
     }
     std::string string_type = ToString(types[i]);
     ss << string_type;
@@ -301,7 +301,7 @@ bool ParseVectorSizeT(
   vec->clear();
   size_t start = 0;
   while (start < value.size()) {
-    size_t end = value.find(':', start);
+    size_t end = value.find(',', start);
     size_t number;
     if (end == std::string::npos) {
       number = ParseSizeT(value.substr(start));
@@ -309,6 +309,39 @@ bool ParseVectorSizeT(
       break;
     } else {
       number = ParseSizeT(value.substr(start, end - start));
+      vec->emplace_back(number);
+      start = end + 1;
+    }
+  }
+  return true;
+}
+
+bool SerializeVectorCharT(const std::vector<char>& types,
+                                    std::string* value) {
+  std::stringstream ss;
+  for (size_t i = 0; i < types.size(); ++i) {
+    if (i > 0) {
+      ss << ',';
+    }
+    std::string string_type = ToString(types[i]);
+    ss << string_type;
+  }
+  *value = ss.str();
+  return true;
+}
+
+bool ParseVectorCharT(const std::string& value, std::vector<char>* vec) {
+  vec->clear();
+  size_t start = 0;
+  while (start < value.size()) {
+    size_t end = value.find(',', start);
+    char number;
+    if (end == std::string::npos) {
+      number = ParseCharT(value.substr(start));
+      vec->emplace_back(number);
+      break;
+    } else {
+      number = ParseCharT(value.substr(start, end - start));
       vec->emplace_back(number);
       start = end + 1;
     }
@@ -520,6 +553,9 @@ bool ParseOptionHelper(char* opt_address, const OptionType& opt_type,
     case OptionType::kVectorSizeT:
       return ParseVectorSizeT(
           value, reinterpret_cast<std::vector<size_t>*>(opt_address));
+    case OptionType::kVectorCharT:
+      return ParseVectorCharT(
+          value, reinterpret_cast<std::vector<char>*>(opt_address));
     case OptionType::kSliceTransform:
       return ParseSliceTransform(
           value, reinterpret_cast<std::shared_ptr<const SliceTransform>*>(
@@ -643,6 +679,11 @@ bool SerializeSingleOptionHelper(const char* opt_address,
     case OptionType::kVectorSizeT:
       return SerializeVectorSizeT(
           *(reinterpret_cast<const std::vector<size_t>*>(opt_address)),
+          value);
+      break;
+    case OptionType::kVectorCharT:
+      return SerializeVectorCharT(
+          *(reinterpret_cast<const std::vector<char>*>(opt_address)),
           value);
       break;
     case OptionType::kSliceTransform: {
@@ -1799,23 +1840,23 @@ std::unordered_map<std::string, OptionTypeInfo>
           OptionVerificationType::kNormal, false, 0}},
         {"num_logical_levels",
          {offset_of(&ColumnFamilyOptions::num_logical_levels), OptionType::kSizeT,
-          OptionVerificationType::kNormal, false, 0}},
+          OptionVerificationType::kNormal, true, offsetof(struct MutableCFOptions, num_logical_levels)}},
         {"rpl",
          {offset_of(&ColumnFamilyOptions::rpl),
           OptionType::kVectorSizeT, OptionVerificationType::kNormal,
-          false, 0}},
+          true, offsetof(struct MutableCFOptions, rpl)}},
         {"rpl_multiplier",
          {offset_of(&ColumnFamilyOptions::rpl_multiplier),
           OptionType::kVectorSizeT, OptionVerificationType::kNormal,
-          false, 0}},
+          true, offsetof(struct MutableCFOptions, rpl_multiplier)}},
         {"fanout",
          {offset_of(&ColumnFamilyOptions::fanout),
           OptionType::kVectorSizeT, OptionVerificationType::kNormal,
-          false, 0}},
+          true, offsetof(struct MutableCFOptions, fanout)}},
         {"level_type",
          {offset_of(&ColumnFamilyOptions::level_type),
-          OptionType::kChar, OptionVerificationType::kNormal,
-          false, 0}},
+          OptionType::kVectorCharT, OptionVerificationType::kNormal,
+          true, offsetof(struct MutableCFOptions, level_type)}},
         {"source_compaction_factor",
          {0, OptionType::kInt, OptionVerificationType::kDeprecated, true, 0}},
         {"target_file_size_multiplier",

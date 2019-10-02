@@ -1696,7 +1696,7 @@ void VersionStorageInfo::ComputeCompactionScore(
 void VersionStorageInfo::ComputeAdaptiveCompactionScore(
     const ImmutableCFOptions& immutable_cf_options,
     const MutableCFOptions&) {
-  size_t num_llevels = immutable_cf_options.num_logical_levels;
+  size_t num_llevels = ll_to_l_.size() - 1; // first is l0 that is unused
   compaction_l_score_.resize(num_llevels+1);
   compaction_l_level_.resize(num_llevels+1);
   for (size_t i = 0; i <= num_llevels; ++i) {
@@ -2677,7 +2677,7 @@ void VersionStorageInfo::CalculateAdaptiveBaseBytes(const ImmutableCFOptions& io
                                             const MutableCFOptions& options) {
   base_level_ = (ioptions.compaction_style == kCompactionStyleLevel) ? 1 : -1;
   level_max_bytes_.resize(ioptions.num_levels);
-  size_t num_llevels = ioptions.num_logical_levels;
+  size_t num_llevels = options.num_logical_levels;
   assert(num_llevels);
   llevel_max_runs_.resize(num_llevels+1); // there is no logical l0
   llevel_fanout_.resize(num_llevels+1);
@@ -2692,12 +2692,12 @@ void VersionStorageInfo::CalculateAdaptiveBaseBytes(const ImmutableCFOptions& io
   int l = 1;
   auto max_bytes = options.max_bytes_for_level_base;
   for (size_t ll = 1; ll <= num_llevels; ++ll) {
-    llevel_max_runs_[ll] = ioptions.rpl[ll];
-    llevel_fanout_[ll] = ioptions.fanout[ll];
-    llevel_type_[ll] = ioptions.level_type[ll];
-    size_t sorted_runs = ioptions.rpl_multiplier[ll] * ioptions.rpl[ll];
+    llevel_max_runs_[ll] = options.rpl[ll];
+    llevel_fanout_[ll] = options.fanout[ll];
+    llevel_type_[ll] = options.level_type[ll];
+    size_t sorted_runs = options.rpl_multiplier[ll] * options.rpl[ll];
     ll_to_l_[ll] = l;
-    max_bytes *= ioptions.fanout[ll];
+    max_bytes *= options.fanout[ll];
     for (size_t i = 0; i < sorted_runs; i++) {
       l_to_ll_[l] = ll;
       level_max_bytes_[l] = max_bytes;
