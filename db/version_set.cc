@@ -1697,6 +1697,8 @@ void VersionStorageInfo::ComputeAdaptiveCompactionScore(
     const ImmutableCFOptions& immutable_cf_options,
     const MutableCFOptions&) {
   size_t num_llevels = ll_to_l_.size() - 1; // first is l0 that is unused
+  size_t last_level = ll_to_l_[num_llevels];
+  assert((int) last_level <= immutable_cf_options.num_levels);
   compaction_l_score_.resize(num_llevels+1);
   compaction_l_level_.resize(num_llevels+1);
   for (size_t i = 0; i <= num_llevels; ++i) {
@@ -1704,7 +1706,7 @@ void VersionStorageInfo::ComputeAdaptiveCompactionScore(
     compaction_l_level_[i] = i;
   }
   // Last level is not the source of compaction
-  for (int level = 1; level < num_levels() - 1; level++) {
+  for (size_t level = 1; level < last_level; level++) {
     assert(level != 0); // kill L0
     int ll = l_to_ll_[level];
     assert((size_t)ll != num_llevels);
@@ -1725,7 +1727,7 @@ void VersionStorageInfo::ComputeAdaptiveCompactionScore(
     }
     const bool level_l = llevel_type_[ll] == 'L';
     // The last sorted run in leveled-N
-    const bool first_in_level_n = llevel_type_[ll] == 'N' && ll_to_l_[ll] == level;
+    const bool first_in_level_n = llevel_type_[ll] == 'N' && ll_to_l_[ll] == (int)level;
     if (level_l || first_in_level_n) {
       // Compute the ratio of current size to size limit.
       uint64_t level_bytes_no_compacting = 0;

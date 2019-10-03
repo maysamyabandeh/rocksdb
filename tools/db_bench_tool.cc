@@ -285,6 +285,8 @@ DEFINE_double(read_random_exp_range, 0.0,
 
 DEFINE_bool(histogram, false, "Print histogram of operation timings");
 
+DEFINE_bool(reshape, false, "Reshape the SLM tree in the middle of benchmark");
+
 DEFINE_bool(enable_numa, false,
             "Make operations aware of NUMA architecture and bind memory "
             "and cpus corresponding to nodes together. In NUMA, memory "
@@ -2459,8 +2461,10 @@ void VerifyDBFromDB(std::string& truth_db_name) {
     auto info_log = db_.db->GetOptions(db_.db->DefaultColumnFamily()).info_log;
     std::function<void(std::future<void>)> printcpu =
         [&](std::future<void> futureObj) {
-          uint64_t sleep_ms = 60000;
+          uint64_t last_now = FLAGS_env->NowMicros() / 1000;
+          uint64_t sleep_ms = 6000;
           uint64_t last_bytes = 0;
+          int i = 0;
           do {
             auto usage = getCurrentValue();
             float write_rate = 0;
@@ -2468,8 +2472,14 @@ void VerifyDBFromDB(std::string& truth_db_name) {
             float write_usage = 0;
             if (open_options_.rate_limiter) {
               auto bytes = open_options_.rate_limiter->GetTotalBytesThrough();
-              write_rate = (bytes - last_bytes) * 1000 / (float)sleep_ms;
+              uint64_t now = FLAGS_env->NowMicros() / 1000;
+              auto duration = now - last_now;
+              //duration = sleep_ms;
+              printf("\n now: %lu last_now %lu diff %lu\n ", now, last_now, duration);
+              write_rate =
+                  (bytes - last_bytes) * 1000 / (float)duration;
               last_bytes = bytes;
+              last_now = now;
               conf_rate = open_options_.rate_limiter->GetBytesPerSecond();
               write_usage = write_rate / conf_rate * 100;
             }
@@ -2477,6 +2487,47 @@ void VerifyDBFromDB(std::string& truth_db_name) {
                    write_usage, write_rate, conf_rate);
             ROCKS_LOG_WARN(info_log, "cpu usage %f write rate: %f : %f < %ld\n",
                            usage, write_usage, write_rate, conf_rate);
+            if (i == 2 && FLAGS_reshape) {
+              auto s = db_.db->SetOptions({
+                  {"num_logical_levels", "6"},
+                  {"level_type", "O,T,T,T,N,L,L"},
+                  {"rpl", "0,2,2,2,2,1,1"},
+                  {"rpl_multiplier", "0,7,1,1,1,1,1"},
+                  {"fanout", "0,1,4,4,3,3,3"},
+              });
+              assert(s.ok());
+            } else if (i == 120 && FLAGS_reshape) {
+              auto s = db_.db->SetOptions({
+                  {"num_logical_levels", "6"},
+                  {"level_type", "O,T,N,L,L,L,L"},
+                  {"rpl", "0,2,2,1,1,1,1"},
+                  {"rpl_multiplier", "0,7,1,1,1,1,1"},
+                  {"fanout", "0,1,4,4,3,3,3"},
+              });
+              assert(s.ok());
+            }
+            /*
+            if (i == 4 && FLAGS_reshape) {
+              auto s = db_.db->SetOptions({
+                  {"num_logical_levels", "4"},
+                  {"level_type", "O,T,L,L,L"},
+                  {"rpl", "0,4,1,1,1"},
+                  {"rpl_multiplier", "0,7,1,1,1"},
+                  {"fanout", "0,1,4,4,4"},
+              });
+              assert(s.ok());
+            } else if (i == 10 && FLAGS_reshape) {
+              auto s = db_.db->SetOptions({
+                  {"num_logical_levels", "5"},
+                  {"level_type", "O,T,T,N,N,L"},
+                  {"rpl", "0,4,3,2,2,1"},
+                  {"rpl_multiplier", "0,7,4,1,1,1"},
+                  {"fanout", "0,1,4,4,4,4"},
+              });
+              assert(s.ok());
+            }
+            */
+            i++;
           } while (futureObj.wait_for(std::chrono::milliseconds(sleep_ms)) ==
                    std::future_status::timeout);
         };

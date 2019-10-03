@@ -240,6 +240,8 @@ ColumnFamilyOptions SanitizeOptions(const ImmutableDBOptions& db_options,
                      num_levels, num_levels + add - 1);
       num_levels += add;
     }
+    // TODO(myabandeh): hack to allow dynamic reconfigurations that increases num_levels
+    num_levels *= 2;
     result.num_levels = num_levels;
     ROCKS_LOG_WARN(db_options.info_log.get(), "num_logical_levels %zu num_levels %d\n", result.num_logical_levels, result.num_levels);
   }

@@ -1406,6 +1406,9 @@ bool LevelCompactionBuilder::CompactionInProgress(int level) {
 Compaction* LevelCompactionBuilder::PickCompaction(LogBuffer* log_buffer) {
   (void)log_buffer;
 
+  size_t num_llevels_tmp = vstorage_->ll_to_l_.size() - 1; // first is l0 that is unused
+  // num_levels might be larger than last_level due to reconfiguration.
+  size_t last_level = vstorage_->ll_to_l_[num_llevels_tmp];
   // check for trivial moves for Leveled-N
   // Keep the first physical level of Leveled-N empty for follow-up compactions.
   // This simplifies Leveled-N implementation by always targetting its first
@@ -1574,7 +1577,7 @@ Compaction* LevelCompactionBuilder::PickCompaction(LogBuffer* log_buffer) {
              vstorage_->llevel_type_[ll + 1] == 'T';
 
     ROCKS_LOG_DEBUG(ioptions_.info_log, "i=%d tiered=%d ll=%d start_level=%d next_level=%d output_level_=%d", i, tiered, ll, start_level, next_level, output_level_);
-    if (!tiered) {  // leveled or levled-N
+    if (!tiered) {  // leveled or leveled-N
       if (CompactionInProgress(output_level_)) {
         ROCKS_LOG_INFO(
             ioptions_.info_log,
@@ -1584,7 +1587,7 @@ Compaction* LevelCompactionBuilder::PickCompaction(LogBuffer* log_buffer) {
       }
     } else { // try to find an empty output_level_
       if (!LevelIsEmpty(output_level_)) {
-        for (int nl = next_level + 1; nl < ioptions_.num_levels; nl++) {
+        for (int nl = next_level + 1; nl <= (int) last_level; nl++) {
           if (vstorage_->l_to_ll_[nl] != (ll + 1)) {
             break;
           }
@@ -1666,6 +1669,26 @@ Compaction* LevelCompactionBuilder::PickCompaction(LogBuffer* log_buffer) {
       // TODO(myabandeh): remove the log line
       ROCKS_LOG_INFO(ioptions_.info_log, "compaction_inputs_ push_back: %zu files from level %d", level_inputs.files.size(), level_inputs.level);
       compaction_inputs_.push_back(level_inputs);
+    }
+    // merge levels after last level into the last level. this happens after reconfiguration when the number of levels decreases.
+    if (output_level_ == (int)last_level &&
+        last_level + 1 < vstorage_->l_to_ll_.size()) {
+      for (size_t post_level = last_level + 1;
+           post_level < vstorage_->l_to_ll_.size(); post_level++) {
+        if (!LevelIsEmpty(post_level)) {  // include post_level in input
+          assert(!tiered);
+          CompactionInputFiles level_inputs;
+          level_inputs.level = post_level;
+          output_gen_ =
+              std::max(output_gen_, compaction_picker_->generation(post_level));
+          level_inputs.files = vstorage_->files_[post_level];
+          ROCKS_LOG_INFO(ioptions_.info_log,
+                         "compaction_inputs_ post_level push_back: %zu files "
+                         "from level %d",
+                         level_inputs.files.size(), level_inputs.level);
+          compaction_inputs_.push_back(level_inputs);
+        }
+      }
     }
     assert(output_gen_);
 

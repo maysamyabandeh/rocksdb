@@ -605,6 +605,35 @@ Status DBImpl::SetOptions(
     s = cfd->SetOptions(options_map);
     if (s.ok()) {
       new_options = *cfd->GetLatestMutableCFOptions();
+
+      auto& result = new_options;
+      // TODO(myabadeh): aviod redundancy with SanitizeOptions
+      if (result.num_logical_levels != 0) {  // adaptive enabled
+        // then derive num_levels accordingly
+        int num_levels = 1;  // L0
+        ROCKS_LOG_WARN(immutable_db_options_.info_log.get(), "Target LSM Shape:");
+        size_t size = result.max_bytes_for_level_base;
+        for (size_t ll = 1; ll <= result.num_logical_levels; ll++) {
+          size_t rpl = result.rpl[ll];
+          size_t multiplier = result.rpl_multiplier[ll];
+          size_t add = rpl * multiplier;
+          char type = result.level_type[ll];
+          assert(type == 'L' || type == 'N' || type == 'T');
+          assert(type == 'T' || multiplier == 1);
+          size *= result.fanout[ll];
+          ROCKS_LOG_WARN(immutable_db_options_.info_log.get(),
+                         "%c%d: %zux %9s [L%d:L%d]", type, ll, rpl,
+                         BytesToHumanString(size).c_str(), num_levels,
+                         num_levels + add - 1);
+          num_levels += add;
+        }
+        ROCKS_LOG_WARN(immutable_db_options_.info_log.get(),
+                       "num_logical_levels %zu num_levels %d < %d\n",
+                       result.num_logical_levels, num_levels,
+                       cfd->ioptions()->num_levels);
+      }
+
+
       // Append new version to recompute compaction score.
       VersionEdit dummy_edit;
       versions_->LogAndApply(cfd, new_options, &dummy_edit, &mutex_,
