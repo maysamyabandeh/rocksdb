@@ -31,6 +31,7 @@ $bin --benchmarks="fillrandom,stats" --use_existing_db=0 --db=$dbdir --num=$nw $
 kill $vpid
 kill $ipid
 du -hs $dbdir > dw.$sfx
+fwamp=`cat $dbdir/LOG | grep STAT -A100 | grep Sum | awk '{print $12}' | tail -1`
 
 # Let the ongoing compactions to finish
 echo reading the db at `date` ...
@@ -42,6 +43,7 @@ $bin --benchmarks="readrandom,stats" --use_existing_db=1 --db=$dbdir --num=$nw -
 kill $vpid
 kill $ipid
 du -hs $dbdir > dr.$sfx
+rwamp=`cat $dbdir/LOG | grep STAT -A100 | grep Sum | awk '{print $12}' | tail -1`
 
 # measuring performance under a realistice read-write workload
 echo transacting the db at `date` ...
@@ -49,10 +51,11 @@ vmstat 1 >& vt.$sfx &
 vpid=$!
 iostat -kx 1 >& it.$sfx &
 ipid=$!
-$bin --benchmarks="readwhilewriting,stats" --use_existing_db=1 --db=$dbdir --num=$nw --duration=120 $defargs $myargs >& ot.$sfx
+$bin --benchmarks="readwhilewriting,stats" --use_existing_db=1 --db=$dbdir --num=$nw --duration=120 $defargs --rate_limiter_bytes_per_sec=50000000 --reshape  $myargs >& ot.$sfx
 kill $vpid
 kill $ipid
 du -hs $dbdir > dt.$sfx
+twamp=`cat $dbdir/LOG | grep STAT -A100 | grep Sum | awk '{print $12}' | tail -1`
 
 echo ...done at `date`
 
@@ -62,7 +65,7 @@ nr=`grep readrandom or.$sfx | awk '{print $(NF-1)}'`
 nt=`grep readwhilewriting ot.$sfx | awk '{print $(NF-1)}'`
 
 echo iostat metrics > hw.$sfx
-printf "Stage\tNsamp\tr/s\trMB/s\tw/s\twMB/s\trGB\twGB\tr/i\tw/i\trkb/i\twkb/i\tMrows\n" >> hw.$sfx
+printf "Stage\tNsamp\tr/s\trMB/s\tw/s\twMB/s\trGB\twGB\tr/i\tw/i\trkb/i\twkb/i\tMrows\tw-amp\n" >> hw.$sfx
 c=$( grep -a $dname iw.$sfx | wc -l )
 grep -a $dname iw.$sfx | tail -$(( $c - 1 )) > tmp.iw
 
@@ -72,9 +75,9 @@ grep -a $dname ir.$sfx | tail -$(( $c - 1 )) > tmp.ir
 c=$( grep -a $dname it.$sfx | wc -l )
 grep -a $dname it.$sfx | tail -$(( $c - 1 )) > tmp.it
 
-cat tmp.iw | awk '{ rs += $4; ws += $5; rkb += $6; wkb += $7; c += 1 } END { printf "fill\t%s\t%.0f\t%.1f\t%.0f\t%.1f\t%.1f\t%.1f\t%.5f\t%.5f\t%.5f\t%.5f\t%.1f\n", c, rs/c, rkb/1024.0/c, ws/c, wkb/1024.0/c, rkb/(1024*1024.0), wkb/(1024*1024.0), rs/c/q, rkb/c/q, ws/c/q, wkb/c/q, q/1000000.0 }' q=$nw  >> hw.$sfx
-cat tmp.ir | awk '{ rs += $4; ws += $5; rkb += $6; wkb += $7; c += 1 } END { printf "read\t%s\t%.0f\t%.1f\t%.0f\t%.1f\t%.1f\t%.1f\t%.5f\t%.5f\t%.5f\t%.5f\t%.1f\n", c, rs/c, rkb/1024.0/c, ws/c, wkb/1024.0/c, rkb/(1024*1024.0), wkb/(1024*1024.0), rs/c/q, rkb/c/q, ws/c/q, wkb/c/q, q/1000000.0 }' q=$nr  >> hw.$sfx
-cat tmp.it | awk '{ rs += $4; ws += $5; rkb += $6; wkb += $7; c += 1 } END { printf "tran\t%s\t%.0f\t%.1f\t%.0f\t%.1f\t%.1f\t%.1f\t%.5f\t%.5f\t%.5f\t%.5f\t%.1f\n", c, rs/c, rkb/1024.0/c, ws/c, wkb/1024.0/c, rkb/(1024*1024.0), wkb/(1024*1024.0), rs/c/q, rkb/c/q, ws/c/q, wkb/c/q, q/1000000.0 }' q=$nt  >> hw.$sfx
+cat tmp.iw | awk '{ rs += $4; ws += $5; rkb += $6; wkb += $7; c += 1 } END { printf "fill\t%s\t%.0f\t%.1f\t%.0f\t%.1f\t%.1f\t%.1f\t%.5f\t%.5f\t%.5f\t%.5f\t%.1f\n", c, rs/c, rkb/1024.0/c, ws/c, wkb/1024.0/c, rkb/(1024*1024.0), wkb/(1024*1024.0), rs/c/q, rkb/c/q, ws/c/q, wkb/c/q, q/1000000.0, wamp }' q=$nw wamp=$fwamp >> hw.$sfx
+cat tmp.ir | awk '{ rs += $4; ws += $5; rkb += $6; wkb += $7; c += 1 } END { printf "read\t%s\t%.0f\t%.1f\t%.0f\t%.1f\t%.1f\t%.1f\t%.5f\t%.5f\t%.5f\t%.5f\t%.1f\n", c, rs/c, rkb/1024.0/c, ws/c, wkb/1024.0/c, rkb/(1024*1024.0), wkb/(1024*1024.0), rs/c/q, rkb/c/q, ws/c/q, wkb/c/q, q/1000000.0, wamp }' q=$nr wamp=$rwamp >> hw.$sfx
+cat tmp.it | awk '{ rs += $4; ws += $5; rkb += $6; wkb += $7; c += 1 } END { printf "tran\t%s\t%.0f\t%.1f\t%.0f\t%.1f\t%.1f\t%.1f\t%.5f\t%.5f\t%.5f\t%.5f\t%.1f\n", c, rs/c, rkb/1024.0/c, ws/c, wkb/1024.0/c, rkb/(1024*1024.0), wkb/(1024*1024.0), rs/c/q, rkb/c/q, ws/c/q, wkb/c/q, q/1000000.0, wamp }' q=$nt wamp=$twamp >> hw.$sfx
 cat tmp.iw tmp.ir tmp.it | awk '{ rs += $4; ws += $5; rkb += $6; wkb += $7; c += 1 } END { printf "totl\t%s\t%.0f\t%.1f\t%.0f\t%.1f\t%.1f\t%.1f\t%.5f\t%.5f\t%.5f\t%.5f\t%.1f\n", c, rs/c, rkb/1024.0/c, ws/c, wkb/1024.0/c, rkb/(1024*1024.0), wkb/(1024*1024.0), rs/c/q, rkb/c/q, ws/c/q, wkb/c/q, q/1000000.0 }' q=$((nw+nr+nt))  >> hw.$sfx
 
 c=$( grep -av swpd vw.$sfx | wc -l )
