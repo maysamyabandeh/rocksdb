@@ -2462,7 +2462,7 @@ void VerifyDBFromDB(std::string& truth_db_name) {
     std::function<void(std::future<void>)> printcpu =
         [&](std::future<void> futureObj) {
           uint64_t last_now = FLAGS_env->NowMicros() / 1000;
-          uint64_t sleep_ms = 6000;
+          uint64_t sleep_ms = 600000;
           uint64_t last_bytes = 0;
           int i = 0;
           do {
@@ -2470,6 +2470,8 @@ void VerifyDBFromDB(std::string& truth_db_name) {
             float write_rate = 0;
             int64_t conf_rate = 0;
             float write_usage = 0;
+            bool do_lower_wamp = false;
+            bool do_lower_cpu = false;
             if (open_options_.rate_limiter) {
               auto bytes = open_options_.rate_limiter->GetTotalBytesThrough();
               uint64_t now = FLAGS_env->NowMicros() / 1000;
@@ -2482,12 +2484,162 @@ void VerifyDBFromDB(std::string& truth_db_name) {
               last_now = now;
               conf_rate = open_options_.rate_limiter->GetBytesPerSecond();
               write_usage = write_rate / conf_rate * 100;
+              do_lower_wamp = write_usage > 95 && usage < 50;
+              do_lower_cpu = write_usage < 80 && usage > 70;
             }
             printf("cpu usage %f write rate: %f : %f < %ld\n", usage,
                    write_usage, write_rate, conf_rate);
             ROCKS_LOG_WARN(info_log, "cpu usage %f write rate: %f : %f < %ld\n",
                            usage, write_usage, write_rate, conf_rate);
-            if (i == 2 && FLAGS_reshape) {
+            if (do_lower_wamp && FLAGS_reshape) {
+              auto column_family = db_.db->DefaultColumnFamily();
+              auto cfh =
+                  reinterpret_cast<ColumnFamilyHandleImpl*>(column_family);
+              auto db_impl =
+                  reinterpret_cast<DBImpl*>(db_.db);
+              auto cfd = cfh->cfd();
+              SuperVersion* sv = db_impl->GetAndRefSuperVersion(cfd);
+              auto sp = sv->current->storage_info();
+              auto &s = *sp;
+              auto ll_size = s.llevel_type_.size();
+              assert(s.llevel_type_[ll_size-1] == 'L');
+              size_t target_l = 0;
+              for (; target_l < ll_size; target_l++) {
+                if (s.llevel_type_[target_l] == 'N') {
+                  break;
+                }
+              }
+              if (target_l + 2 == ll_size) {
+                ROCKS_LOG_WARN(info_log,
+                               "Reshape failure: There is only 1 L left\n");
+                printf("Reshape failure: There is only 1 L left\n");
+                db_impl->ReturnAndCleanupSuperVersion(cfd, sv);
+                continue;
+              }
+              std::string llevel_type = "O";
+              std::string rpl_multiplier = "0";
+              std::string rpl = "0";
+              std::string fanout = "0";
+              for (size_t ll = 1; ll < target_l; ll++) {
+                llevel_type += ",";
+                llevel_type += s.llevel_type_[ll];
+                rpl += ",";
+                rpl += ToString(s.llevel_max_runs_[ll]);
+                rpl_multiplier += ",";
+                rpl_multiplier += ll == 1 ? "7" : "1";
+                fanout += ",";
+                fanout += ToString(s.llevel_fanout_[ll]);
+              }
+              llevel_type += ",T";
+              rpl += ",";
+              rpl += ToString(s.llevel_max_runs_[target_l]);
+              llevel_type += ",N";
+              rpl += ",3";
+              rpl_multiplier += ",1,1";
+              fanout += ",";
+              fanout += ToString(s.llevel_max_runs_[target_l - 1]);
+              fanout += ",";
+              fanout += ToString(s.llevel_max_runs_[target_l]);
+              for (size_t ll = target_l + 2; ll < ll_size; ll++) {
+                llevel_type += ",";
+                llevel_type += s.llevel_type_[ll];
+                rpl += ",";
+                rpl += ToString(s.llevel_max_runs_[ll]);
+                rpl_multiplier += ",1";
+                fanout += ",";
+                fanout += ToString(s.llevel_fanout_[ll]);
+              }
+              printf("LReshape\n");
+              printf("llevel_type %s\n", llevel_type.c_str());
+              printf("rpl %s\n", rpl.c_str());
+              printf("rpl_multiplier %s\n", rpl_multiplier.c_str());
+              printf("fanout %s\n", fanout.c_str());
+              auto ss = db_.db->SetOptions({
+                  {"level_type", llevel_type},
+                  {"rpl", rpl},
+                  {"rpl_multiplier", rpl_multiplier},
+                  {"fanout", fanout},
+              });
+              assert(ss.ok());
+
+              db_impl->ReturnAndCleanupSuperVersion(cfd, sv);
+            } else if (do_lower_cpu && FLAGS_reshape) {
+              auto column_family = db_.db->DefaultColumnFamily();
+              auto cfh =
+                  reinterpret_cast<ColumnFamilyHandleImpl*>(column_family);
+              auto db_impl =
+                  reinterpret_cast<DBImpl*>(db_.db);
+              auto cfd = cfh->cfd();
+              SuperVersion* sv = db_impl->GetAndRefSuperVersion(cfd);
+              auto sp = sv->current->storage_info();
+              auto &s = *sp;
+              auto ll_size = s.llevel_type_.size();
+              assert(s.llevel_type_[ll_size-1] == 'L');
+              size_t target_l = 0;
+              for (; target_l < ll_size; target_l++) {
+                if (s.llevel_type_[target_l] == 'N') {
+                  break;
+                }
+              }
+              target_l--;
+              if (target_l == 1) {
+                ROCKS_LOG_WARN(info_log,
+                               "Reshape failure: There is only 1 T left\n");
+                printf("Reshape failure: There is only 1 T left\n");
+                db_impl->ReturnAndCleanupSuperVersion(cfd, sv);
+                continue;
+              }
+              std::string llevel_type = "O";
+              std::string rpl_multiplier = "0";
+              std::string rpl = "0";
+              std::string fanout = "0";
+              for (size_t ll = 1; ll < target_l; ll++) {
+                llevel_type += ",";
+                llevel_type += s.llevel_type_[ll];
+                rpl += ",";
+                rpl += ToString(s.llevel_max_runs_[ll]);
+                rpl_multiplier += ",";
+                rpl_multiplier += ll == 1 ? "7" : "1";
+                fanout += ",";
+                fanout += ToString(s.llevel_fanout_[ll]);
+              }
+              llevel_type += ",N";
+              rpl += ",";
+              rpl += ToString(s.llevel_max_runs_[target_l]);
+              rpl_multiplier += ",1";
+              fanout += ",";
+              fanout += ToString(s.llevel_max_runs_[target_l - 1]);
+
+              llevel_type += ",L";
+              rpl += ",1";
+              rpl_multiplier += ",1";
+              fanout += ",";
+              fanout += ToString(s.llevel_max_runs_[target_l]);
+              for (size_t ll = target_l + 2; ll < ll_size; ll++) {
+                llevel_type += ",";
+                llevel_type += s.llevel_type_[ll];
+                rpl += ",";
+                rpl += ToString(s.llevel_max_runs_[ll]);
+                rpl_multiplier += ",1";
+                fanout += ",";
+                fanout += ToString(s.llevel_fanout_[ll]);
+              }
+              printf("LReshape\n");
+              printf("llevel_type %s\n", llevel_type.c_str());
+              printf("rpl %s\n", rpl.c_str());
+              printf("rpl_multiplier %s\n", rpl_multiplier.c_str());
+              printf("fanout %s\n", fanout.c_str());
+              auto ss = db_.db->SetOptions({
+                  {"level_type", llevel_type},
+                  {"rpl", rpl},
+                  {"rpl_multiplier", rpl_multiplier},
+                  {"fanout", fanout},
+              });
+              assert(ss.ok());
+
+              db_impl->ReturnAndCleanupSuperVersion(cfd, sv);
+            }
+            if (i == 5000 && FLAGS_reshape) {
               auto s = db_.db->SetOptions({
                   {"num_logical_levels", "6"},
                   {"level_type", "O,T,T,T,N,L,L"},
@@ -2496,7 +2648,7 @@ void VerifyDBFromDB(std::string& truth_db_name) {
                   {"fanout", "0,1,4,4,3,3,3"},
               });
               assert(s.ok());
-            } else if (i == 120 && FLAGS_reshape) {
+            } else if (i == 12000 && FLAGS_reshape) {
               auto s = db_.db->SetOptions({
                   {"num_logical_levels", "6"},
                   {"level_type", "O,T,N,L,L,L,L"},
