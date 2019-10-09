@@ -224,11 +224,49 @@ ColumnFamilyOptions SanitizeOptions(const ImmutableDBOptions& db_options,
   // Adjust the number of physical levels based on the configuration for logical
   // levels if adaptive compaction is enabled.
   if (result.num_logical_levels != 0) { // adaptive enabled
+    if (result.num_logical_levels < 3) {
+      assert(0);
+      //return Status::InvalidArgument("num_logical_levels must be >= 3");
+    }
+    if (result.fanout[1] != 1) {
+      assert(0);
+      //return Status::InvalidArgument("fanout[1] must be 1");
+    }
+    if (result.level_type[1] != 'T') {
+      assert(0);
+      //return Status::InvalidArgument("First level must be T");
+    }
+    if (result.level_type[result.num_logical_levels] != 'L') {
+      assert(0);
+      //return Status::InvalidArgument("Last level must be L");
+    }
     // then derive num_levels accordingly
     int num_levels = 1; // L0
     ROCKS_LOG_WARN(db_options.info_log.get(), "Target LSM Shape:");
     size_t size = result.max_bytes_for_level_base;
     for (size_t ll = 1; ll <= result.num_logical_levels; ll++) {
+      if (ll > 1) {
+        if (result.level_type[ll] == 'T' &&
+            result.fanout[ll] != result.rpl[ll - 1]) {
+      assert(0);
+       //   return Status::InvalidArgument(
+       //       "fanout of T must equal to rpl of last level");
+        }
+        if (result.level_type[ll] != 'T' &&
+            result.fanout[ll] < result.rpl[ll - 1]) {
+      assert(0);
+       //   return Status::InvalidArgument(
+       //       "fanout of N or L must be larger than rpl of last level");
+        }
+        if (result.level_type[ll] != 'L' && result.rpl[ll] == 1) {
+      assert(0);
+       //   return Status::InvalidArgument("rpl of T or N must be > 1");
+        }
+        if (result.level_type[ll] == 'L' && result.rpl[ll] != 1) {
+      assert(0);
+      //    return Status::InvalidArgument("rpl of L must be 1");
+        }
+      }
       size_t rpl = result.rpl[ll];
       size_t multiplier = result.rpl_multiplier[ll];
       size_t add = rpl * multiplier;
