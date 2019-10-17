@@ -2463,15 +2463,16 @@ void VerifyDBFromDB(std::string& truth_db_name) {
         [&](std::future<void> futureObj) {
           uint64_t last_now = FLAGS_env->NowMicros() / 1000;
           uint64_t sleep_ms = 600000;
-          uint64_t last_bytes = 0;
+          uint64_t last_bytes = 0, last_stall_us = 0;
           int i = 0;
           do {
             auto usage = getCurrentValue();
             float write_rate = 0;
             int64_t conf_rate = 0;
-            float write_usage = 0;
+            float write_usage = 0, stall_usage = 0;
             bool do_lower_wamp = false;
             bool do_lower_cpu = false;
+            bool do_lower_stall = false;
             if (open_options_.rate_limiter) {
               auto bytes = open_options_.rate_limiter->GetTotalBytesThrough();
               uint64_t now = FLAGS_env->NowMicros() / 1000;
@@ -2486,11 +2487,19 @@ void VerifyDBFromDB(std::string& truth_db_name) {
               write_usage = write_rate / conf_rate * 100;
               do_lower_wamp = write_usage > 95 && usage < 50;
               do_lower_cpu = write_usage < 80 && usage > 70;
+              if (dbstats != nullptr) {
+                uint64_t stall_us = dbstats->getTickerCount(STALL_MICROS);
+                stall_usage = (stall_us - last_stall_us) / 10.0 / duration;
+                last_stall_us = stall_us;
+                do_lower_stall = write_usage < 80 && stall_usage > 20;
+                (void)do_lower_stall; // not used yet
+              }
             }
-            printf("cpu usage %f write rate: %f : %f < %ld\n", usage,
-                   write_usage, write_rate, conf_rate);
-            ROCKS_LOG_WARN(info_log, "cpu usage %f write rate: %f : %f < %ld\n",
-                           usage, write_usage, write_rate, conf_rate);
+            printf("cpu usage %f write rate: %f : %f < %ld stall: %f\n", usage,
+                   write_usage, write_rate, conf_rate, stall_usage);
+            ROCKS_LOG_WARN(
+                info_log, "cpu usage %f write rate: %f : %f < %ld stall: %f",
+                usage, write_usage, write_rate, conf_rate, stall_usage);
             if (do_lower_wamp && FLAGS_reshape) {
               auto column_family = db_.db->DefaultColumnFamily();
               auto cfh =
