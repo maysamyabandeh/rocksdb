@@ -2486,13 +2486,12 @@ void VerifyDBFromDB(std::string& truth_db_name) {
               conf_rate = open_options_.rate_limiter->GetBytesPerSecond();
               write_usage = write_rate / conf_rate * 100;
               do_lower_wamp = write_usage > 95 && usage < 50;
-              do_lower_cpu = write_usage < 80 && usage > 70;
+              do_lower_cpu = write_usage < 80 && usage > 40;
               if (dbstats != nullptr) {
                 uint64_t stall_us = dbstats->getTickerCount(STALL_MICROS);
                 stall_usage = (stall_us - last_stall_us) / 10.0 / duration;
                 last_stall_us = stall_us;
                 do_lower_stall = write_usage < 80 && stall_usage > 20;
-                (void)do_lower_stall; // not used yet
               }
             }
             printf("cpu usage %f write rate: %f : %f < %ld stall: %f\n", usage,
@@ -2500,7 +2499,7 @@ void VerifyDBFromDB(std::string& truth_db_name) {
             ROCKS_LOG_WARN(
                 info_log, "cpu usage %f write rate: %f : %f < %ld stall: %f",
                 usage, write_usage, write_rate, conf_rate, stall_usage);
-            if (do_lower_wamp && FLAGS_reshape) {
+            if ((do_lower_wamp || do_lower_stall) && FLAGS_reshape) {
               auto column_family = db_.db->DefaultColumnFamily();
               auto cfh =
                   reinterpret_cast<ColumnFamilyHandleImpl*>(column_family);
@@ -2512,6 +2511,8 @@ void VerifyDBFromDB(std::string& truth_db_name) {
               auto &s = *sp;
               auto ll_size = s.llevel_type_.size();
               assert(s.llevel_type_[ll_size-1] == 'L');
+              const size_t kMinFanout = 3;
+              auto curr_l_fanout = s.llevel_fanout_[ll_size-1];
               size_t target_l = 0;
               for (; target_l < ll_size; target_l++) {
                 if (s.llevel_type_[target_l] == 'N') {
@@ -2525,10 +2526,32 @@ void VerifyDBFromDB(std::string& truth_db_name) {
                 db_impl->ReturnAndCleanupSuperVersion(cfd, sv);
                 continue;
               }
+              if (curr_l_fanout > kMinFanout) {
+                ROCKS_LOG_WARN(info_log,
+                               "Reshape approach: Lower fanout\n");
+                printf("Reshape approach: Lower fanout\n");
+                curr_l_fanout--;
+                target_l--;
+              }
               std::string llevel_type = "O";
               std::string rpl_multiplier = "0";
               std::string rpl = "0";
               std::string fanout = "0";
+              if (target_l == 1) {
+                for (size_t ll = 1; ll < ll_size; ll++) {
+                  llevel_type += ",";
+                  llevel_type += s.llevel_type_[ll];
+                  rpl_multiplier += ll == 1 ? ",7" : ",1";
+                  rpl += ",";
+                  rpl += ToString(s.llevel_max_runs_[ll]);
+                  fanout += ",";
+                  if (s.llevel_type_[ll] == 'L') {
+                    fanout += ToString(curr_l_fanout);
+                  } else {
+                    fanout += ToString(s.llevel_fanout_[ll]);
+                  }
+                }
+              } else {
               for (size_t ll = 1; ll < target_l; ll++) {
                 llevel_type += ",";
                 llevel_type += s.llevel_type_[ll];
@@ -2558,6 +2581,7 @@ void VerifyDBFromDB(std::string& truth_db_name) {
                 fanout += ",";
                 fanout += ToString(s.llevel_fanout_[ll]);
               }
+              }
               printf("LReshape\n");
               printf("llevel_type %s\n", llevel_type.c_str());
               printf("rpl %s\n", rpl.c_str());
@@ -2583,6 +2607,8 @@ void VerifyDBFromDB(std::string& truth_db_name) {
               auto sp = sv->current->storage_info();
               auto &s = *sp;
               auto ll_size = s.llevel_type_.size();
+              const size_t kMaxFanout = 6;
+              auto curr_l_fanout = s.llevel_fanout_[ll_size-1];
               assert(s.llevel_type_[ll_size-1] == 'L');
               size_t target_l = 0;
               for (; target_l < ll_size; target_l++) {
@@ -2592,11 +2618,16 @@ void VerifyDBFromDB(std::string& truth_db_name) {
               }
               target_l--;
               if (target_l == 1) {
-                ROCKS_LOG_WARN(info_log,
-                               "Reshape failure: There is only 1 T left\n");
-                printf("Reshape failure: There is only 1 T left\n");
-                db_impl->ReturnAndCleanupSuperVersion(cfd, sv);
-                continue;
+                if (curr_l_fanout >= kMaxFanout) {
+                  ROCKS_LOG_WARN(info_log,
+                                 "Reshape failure: There is only 1 T left\n");
+                  printf("Reshape failure: There is only 1 T left\n");
+                  db_impl->ReturnAndCleanupSuperVersion(cfd, sv);
+                  continue;
+                } else {
+                  curr_l_fanout++;
+                  target_l = 2;
+                }
               }
               std::string llevel_type = "O";
               std::string rpl_multiplier = "0";
@@ -2623,7 +2654,8 @@ void VerifyDBFromDB(std::string& truth_db_name) {
               rpl += ",1";
               rpl_multiplier += ",1";
               fanout += ",";
-              fanout += ToString(s.llevel_max_runs_[target_l]);
+              fanout += ToString(curr_l_fanout);
+              //fanout += ToString(s.llevel_max_runs_[target_l]);
               for (size_t ll = target_l + 2; ll < ll_size; ll++) {
                 llevel_type += ",";
                 llevel_type += s.llevel_type_[ll];
@@ -2631,7 +2663,8 @@ void VerifyDBFromDB(std::string& truth_db_name) {
                 rpl += ToString(s.llevel_max_runs_[ll]);
                 rpl_multiplier += ",1";
                 fanout += ",";
-                fanout += ToString(s.llevel_fanout_[ll]);
+                fanout += ToString(curr_l_fanout);
+                //fanout += ToString(s.llevel_fanout_[ll]);
               }
               printf("LReshape\n");
               printf("llevel_type %s\n", llevel_type.c_str());
