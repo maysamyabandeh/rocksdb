@@ -1405,6 +1405,21 @@ bool LevelCompactionBuilder::CompactionInProgress(int level) {
 
 Compaction* LevelCompactionBuilder::PickCompaction(LogBuffer* log_buffer) {
   (void)log_buffer;
+  {
+    const int llevel = 1;
+    const int start_level = vstorage_->ll_to_l_[llevel];
+    const int next_level = vstorage_->ll_to_l_[llevel + 1];
+    int empty_levels = 0;
+    for (auto level = start_level; level < next_level; level++) {
+      if (LevelIsEmpty(level) && !LevelIsReserved(level)) {
+        empty_levels++;
+      }
+    }
+    long L1s = next_level - start_level;
+    long compaction_speed = empty_levels * 100 / L1s;
+    RecordTick(ioptions_.statistics, BLOB_DB_BYTES_WRITTEN, compaction_speed);
+    RecordTick(ioptions_.statistics, BLOB_DB_NUM_WRITE);
+  }
 
   size_t num_llevels_tmp = vstorage_->ll_to_l_.size() - 1; // first is l0 that is unused
   // num_levels might be larger than last_level due to reconfiguration.

@@ -2464,12 +2464,15 @@ void VerifyDBFromDB(std::string& truth_db_name) {
           uint64_t last_now = FLAGS_env->NowMicros() / 1000;
           uint64_t sleep_ms = 600000;
           uint64_t last_bytes = 0, last_stall_us = 0;
+          uint64_t last_comp_cnt = 0;
+          uint64_t last_comp_speed = 0;
           int i = 0;
           do {
             auto usage = getCurrentValue();
             float write_rate = 0;
             int64_t conf_rate = 0;
             float write_usage = 0, stall_usage = 0;
+            uint64_t speed_avg = 0;
             bool do_lower_wamp = false;
             bool do_lower_cpu = false;
             bool do_lower_stall = false;
@@ -2485,20 +2488,29 @@ void VerifyDBFromDB(std::string& truth_db_name) {
               last_now = now;
               conf_rate = open_options_.rate_limiter->GetBytesPerSecond();
               write_usage = write_rate / conf_rate * 100;
-              do_lower_wamp = write_usage > 95 && usage < 50;
-              do_lower_cpu = write_usage < 80 && usage > 40;
               if (dbstats != nullptr) {
                 uint64_t stall_us = dbstats->getTickerCount(STALL_MICROS);
                 stall_usage = (stall_us - last_stall_us) / 10.0 / duration;
                 last_stall_us = stall_us;
-                do_lower_stall = write_usage < 80 && stall_usage > 20;
+                do_lower_stall = write_usage < 80 && stall_usage > 0.5;
+
+                uint64_t comp_speed = dbstats->getTickerCount(BLOB_DB_BYTES_WRITTEN);
+                uint64_t comp_cnt = dbstats->getTickerCount(BLOB_DB_NUM_WRITE);
+                auto speed_diff = comp_speed - last_comp_speed;
+                auto cnt_diff = comp_cnt - last_comp_cnt;
+                speed_avg = cnt_diff != 0 ? speed_diff / cnt_diff : 0;
+                last_comp_speed = comp_speed;
+                last_comp_cnt = comp_cnt;
               }
+              do_lower_wamp = write_usage > 95 && usage < 50;
+              do_lower_cpu = write_usage < 80 && usage > 0.40 && stall_usage < 0.01 && speed_avg >= 93;
+              do_lower_stall = do_lower_stall || speed_avg < 92;
             }
-            printf("cpu usage %f write rate: %f : %f < %ld stall: %f\n", usage,
-                   write_usage, write_rate, conf_rate, stall_usage);
+            printf("cpu usage %f write rate: %f : %f < %ld stall: %f speed: %ld\n", usage,
+                   write_usage, write_rate, conf_rate, stall_usage, speed_avg);
             ROCKS_LOG_WARN(
-                info_log, "cpu usage %f write rate: %f : %f < %ld stall: %f",
-                usage, write_usage, write_rate, conf_rate, stall_usage);
+                info_log, "cpu usage %f write rate: %f : %f < %ld stall: %f speed: %ld",
+                usage, write_usage, write_rate, conf_rate, stall_usage, speed_avg);
             if ((do_lower_wamp || do_lower_stall) && FLAGS_reshape) {
               auto column_family = db_.db->DefaultColumnFamily();
               auto cfh =
@@ -2519,14 +2531,15 @@ void VerifyDBFromDB(std::string& truth_db_name) {
                   break;
                 }
               }
-              if (target_l + 2 == ll_size) {
+              if (target_l + 2 == ll_size && curr_l_fanout <= kMinFanout) {
                 ROCKS_LOG_WARN(info_log,
                                "Reshape failure: There is only 1 L left\n");
                 printf("Reshape failure: There is only 1 L left\n");
                 db_impl->ReturnAndCleanupSuperVersion(cfd, sv);
                 continue;
               }
-              if (curr_l_fanout > kMinFanout) {
+              if (target_l + 2 == ll_size) {
+                assert(curr_l_fanout > kMinFanout);
                 ROCKS_LOG_WARN(info_log,
                                "Reshape approach: Lower fanout\n");
                 printf("Reshape approach: Lower fanout\n");
