@@ -2467,6 +2467,8 @@ void VerifyDBFromDB(std::string& truth_db_name) {
           uint64_t last_comp_cnt = 0;
           uint64_t last_comp_speed = 0;
           int i = 0;
+          bool first_run = true;
+          uint64_t do_lower_stall_hist = 0;
           do {
             auto usage = getCurrentValue();
             float write_rate = 0;
@@ -2504,13 +2506,28 @@ void VerifyDBFromDB(std::string& truth_db_name) {
               }
               do_lower_wamp = write_usage > 95 && usage < 50;
               do_lower_cpu = write_usage < 80 && usage > 0.40 && stall_usage < 0.01 && speed_avg >= 93;
+              if (do_lower_stall_hist % 2 == 1 || do_lower_stall_hist % 4 == 2 || do_lower_stall_hist % 8 == 4) {
+                // If there was a recent risk of stall, dont try to lower cpu;
+                do_lower_cpu = false;
+              }
               do_lower_stall = do_lower_stall || speed_avg < 92;
+              if (!first_run) {
+                do_lower_stall_hist = do_lower_stall_hist << 1;
+                do_lower_stall_hist =
+                    do_lower_stall_hist + (do_lower_stall ? 1 : 0);
+              }
             }
+            printf("do_lower_stall_hist %ld do_lower_stall %d\n", do_lower_stall_hist, do_lower_stall);
             printf("cpu usage %f write rate: %f : %f < %ld stall: %f speed: %ld\n", usage,
                    write_usage, write_rate, conf_rate, stall_usage, speed_avg);
             ROCKS_LOG_WARN(
                 info_log, "cpu usage %f write rate: %f : %f < %ld stall: %f speed: %ld",
                 usage, write_usage, write_rate, conf_rate, stall_usage, speed_avg);
+            if (first_run) {
+              first_run = false;
+              continue;
+            }
+            first_run = false;
             if ((do_lower_wamp || do_lower_stall) && FLAGS_reshape) {
               auto column_family = db_.db->DefaultColumnFamily();
               auto cfh =
