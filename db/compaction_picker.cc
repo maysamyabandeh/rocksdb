@@ -1641,7 +1641,6 @@ Compaction* LevelCompactionBuilder::PickCompaction(LogBuffer* log_buffer) {
 
     // Collect inputs
     output_gen_ = 0;
-    int in_cnt = 0;
     for (int level = start_level; level < next_level; level++) {
       assert(level !=0);
       if (!LevelIsMovable(level)) {
@@ -1665,11 +1664,6 @@ Compaction* LevelCompactionBuilder::PickCompaction(LogBuffer* log_buffer) {
       ROCKS_LOG_DEBUG(ioptions_.info_log,
                       "compaction_inputs_ push_back: %zu files from level %d",
                       level_inputs.files.size(), level_inputs.level);
-      in_cnt++;
-      if (start_level == 1 && in_cnt >= 3) {
-        ROCKS_LOG_INFO(ioptions_.info_log, "NOMORE L1, 3 is enough");
-        break;
-      }
     }
     if (compaction_inputs_.empty()) {
       ROCKS_LOG_WARN(ioptions_.info_log,
